@@ -8,6 +8,7 @@ import google.generativeai as genai
 from dataclasses import dataclass
 
 from .rate_limiter import GeminiRateLimiter, RateLimitConfig
+from .script_validator import ScriptValidator
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,9 @@ class ScriptBuilder:
         rate_limit_config = RateLimitConfig(rpm_limit=15)  # Free tier
         self.rate_limiter = GeminiRateLimiter(rate_limit_config)
         
+        # スクリプト検証の初期化
+        self.validator = ScriptValidator()
+        
     async def generate_dialogue_script(self, chapter_title: str, chapter_content: str) -> DialogueScript:
         """Generate a dialogue script from chapter content.
         
@@ -64,11 +68,25 @@ class ScriptBuilder:
             
             total_chars = sum(len(line["text"]) for line in dialogue_lines)
             
-            return DialogueScript(
+            script = DialogueScript(
                 chapter_title=chapter_title,
                 lines=dialogue_lines,
                 total_chars=total_chars
             )
+            
+            # スクリプト検証の実行
+            validation_result = self.validator.validate_script(script)
+            self.validator.log_validation_results(validation_result, chapter_title)
+            
+            # 改善提案の表示
+            if not validation_result.is_valid or validation_result.has_warnings:
+                suggestions = self.validator.get_improvement_suggestions(validation_result)
+                if suggestions:
+                    logger.info(f"章 '{chapter_title}' の改善提案:")
+                    for suggestion in suggestions:
+                        logger.info(f"  - {suggestion}")
+            
+            return script
             
         except Exception as e:
             logger.error(f"Failed to generate dialogue script: {e}")
@@ -92,12 +110,13 @@ class ScriptBuilder:
 {chapter_content}
 
 要件:
-1. 10分で聴ける長さ（合計2800〜3000文字程度）
+1. 5分で聴ける長さ（合計1500〜2000文字程度）
 2. HostとGuestの2人による自然な対話形式
 3. 各発言は必ず「Host:」または「Guest:」で始める
 4. 内容を正確に要約しながら、リスナーが理解しやすい対話にする
 5. 専門用語は適切に説明を加える
 6. 日本語で記述する
+7. 簡潔で要点を絞った対話にしてください
 
 出力形式:
 Host: [ホストの発言]

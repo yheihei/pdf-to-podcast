@@ -13,6 +13,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Import chunk processor for fallback handling
+try:
+    from .tts_chunk_processor import TTSChunkProcessor
+    CHUNK_PROCESSOR_AVAILABLE = True
+except ImportError:
+    CHUNK_PROCESSOR_AVAILABLE = False
+    logger.warning("TTSChunkProcessorが利用できません。分割処理フォールバックが無効になります。")
+
 
 @dataclass
 class VoiceConfig:
@@ -34,6 +42,12 @@ class TTSClient:
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
         
+        # チャンクプロセッサーの初期化
+        if CHUNK_PROCESSOR_AVAILABLE:
+            self.chunk_processor = TTSChunkProcessor(tts_client=self)
+        else:
+            self.chunk_processor = None
+        
     def generate_audio(
         self,
         dialogue_lines: List[Dict[str, str]],
@@ -53,6 +67,10 @@ class TTSClient:
             Audio data in MP3 format as bytes
         """
         logger.info(f"Generating audio with {len(dialogue_lines)} dialogue lines")
+        
+        # Warning for long content
+        if len(dialogue_lines) > 30:
+            logger.warning(f"Large number of dialogue lines ({len(dialogue_lines)}). This may cause TTS timeouts or incomplete audio.")
         
         # Create multi-speaker content with voice configuration
         content = self._create_multi_speaker_content_with_voices(
@@ -110,6 +128,59 @@ class TTSClient:
             
         except Exception as e:
             logger.error(f"Failed to generate audio: {e}")
+            raise
+    
+    async def generate_audio_with_timeout(
+        self,
+        dialogue_lines: List[Dict[str, str]],
+        timeout: int = 180,  # 3分
+        voice_host: str = "Kore",
+        voice_guest: str = "Puck",
+        output_path: Optional[Path] = None
+    ) -> bytes:
+        """タイムアウト付きTTS生成
+        
+        Args:
+            dialogue_lines: List of dialogue entries with speaker and text
+            timeout: タイムアウト時間（秒）
+            voice_host: Voice name for Host speaker
+            voice_guest: Voice name for Guest speaker
+            output_path: Optional path to save the audio file
+            
+        Returns:
+            Audio data in MP3 format as bytes
+            
+        Raises:
+            asyncio.TimeoutError: タイムアウトが発生した場合
+        """
+        logger.info(f"Generating audio with timeout ({timeout}s) for {len(dialogue_lines)} dialogue lines")
+        
+        try:
+            # asyncio.wait_forでタイムアウトを設定
+            audio_data = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.generate_audio(
+                        dialogue_lines=dialogue_lines,
+                        voice_host=voice_host,
+                        voice_guest=voice_guest,
+                        output_path=output_path
+                    )
+                ),
+                timeout=timeout
+            )
+            
+            logger.info(f"Audio generation completed within timeout")
+            return audio_data
+            
+        except asyncio.TimeoutError:
+            logger.error(f"TTS処理がタイムアウトしました (制限: {timeout}秒)")
+            logger.error(f"対話行数: {len(dialogue_lines)}行")
+            logger.error("対話の分割処理を検討してください")
+            raise
+        
+        except Exception as e:
+            logger.error(f"Failed to generate audio with timeout: {e}")
             raise
     
     def _create_multi_speaker_content(self, dialogue_lines: List[Dict[str, str]]) -> str:
@@ -255,8 +326,10 @@ class TTSClient:
         """
         for attempt in range(max_retries + 1):
             try:
-                return self.generate_audio(
+                # タイムアウト機能付きでTTS生成を実行
+                return await self.generate_audio_with_timeout(
                     dialogue_lines=dialogue_lines,
+                    timeout=180,  # 3分のタイムアウト
                     voice_host=voice_host,
                     voice_guest=voice_guest,
                     output_path=output_path
@@ -265,8 +338,36 @@ class TTSClient:
             except Exception as e:
                 error_msg = str(e).lower()
                 
+                # Check if it's a timeout error
+                if isinstance(e, asyncio.TimeoutError) or "timeout" in error_msg:
+                    logger.error(f"TTS処理がタイムアウトしました (試行: {attempt + 1})")
+                    
+                    # 分割処理フォールバックを試行
+                    if self.chunk_processor and len(dialogue_lines) > 10:
+                        logger.warning("大規模スクリプトを検出。分割処理フォールバックを実行します")
+                        try:
+                            fallback_audio = await self.chunk_processor.process_large_dialogue(
+                                dialogue_lines=dialogue_lines,
+                                voice_host=voice_host,
+                                voice_guest=voice_guest,
+                                output_path=output_path,
+                                timeout=120  # 分割処理では短めのタイムアウト
+                            )
+                            logger.info("分割処理フォールバックが成功しました")
+                            return fallback_audio
+                        except Exception as fallback_error:
+                            logger.error(f"分割処理フォールバックに失敗: {fallback_error}")
+                    
+                    if attempt < max_retries:
+                        logger.warning(f"タイムアウトによるリトライ {attempt + 1}/{max_retries}")
+                        await asyncio.sleep(5)  # 短い待機時間
+                        continue
+                    else:
+                        logger.error("タイムアウトの最大リトライ回数に達しました")
+                        raise Exception("failed_timeout")
+                
                 # Check if it's a rate limit error
-                if "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
+                elif "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
                     if attempt < max_retries:
                         # For Gemini's strict rate limit (2 requests per minute), use longer wait times
                         # Base wait time of 30 seconds + exponential backoff
