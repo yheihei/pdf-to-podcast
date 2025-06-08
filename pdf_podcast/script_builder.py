@@ -2,13 +2,14 @@
 
 import asyncio
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from pathlib import Path
 import google.generativeai as genai
 from dataclasses import dataclass
 
 from .rate_limiter import GeminiRateLimiter, RateLimitConfig
 from .script_validator import ScriptValidator
+from .pdf_parser import Section
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,16 @@ class LectureScript:
     chapter_title: str
     content: str  # Lecture content as a single formatted text
     total_chars: int
+
+
+@dataclass
+class SectionScript:
+    """Represents a lecture script for a single section."""
+    section_title: str
+    section_number: str  # "1.1", "2.3" など
+    content: str  # Lecture content as a single formatted text
+    total_chars: int
+    parent_chapter: str = ""  # 所属する章のタイトル
 
 
 class ScriptBuilder:
@@ -92,6 +103,65 @@ class ScriptBuilder:
             logger.error(f"Failed to generate lecture script: {e}")
             raise
     
+    async def generate_section_script(self, section: Section, context: Optional[Dict] = None) -> SectionScript:
+        """Generate a lecture script from section content.
+        
+        Args:
+            section: Section object containing title, content, etc.
+            context: Optional context containing related sections info
+            
+        Returns:
+            SectionScript object containing the lecture
+        """
+        logger.info(f"Generating section script for: {section.section_number} {section.title}")
+        
+        prompt = self._create_section_prompt(section, context)
+        
+        try:
+            # Use rate limiter for API call
+            response = await self.rate_limiter.call_with_backoff(
+                self.model.generate_content, prompt
+            )
+            
+            # Debug: Log the raw response
+            logger.info(f"Raw API response for '{section.section_number}': {response.text[:500]}...")
+            
+            lecture_content = self._parse_lecture_response(response.text)
+            
+            total_chars = len(lecture_content)
+            
+            script = SectionScript(
+                section_title=section.title,
+                section_number=section.section_number,
+                content=lecture_content,
+                total_chars=total_chars,
+                parent_chapter=section.parent_chapter
+            )
+            
+            # スクリプト検証の実行
+            # Note: SectionScript用のvalidation_resultを作成するため、LectureScriptに変換
+            temp_lecture_script = LectureScript(
+                chapter_title=f"{section.section_number} {section.title}",
+                content=lecture_content,
+                total_chars=total_chars
+            )
+            validation_result = self.validator.validate_script(temp_lecture_script)
+            self.validator.log_validation_results(validation_result, f"{section.section_number} {section.title}")
+            
+            # 改善提案の表示
+            if not validation_result.is_valid or validation_result.has_warnings:
+                suggestions = self.validator.get_improvement_suggestions(validation_result)
+                if suggestions:
+                    logger.info(f"中項目 '{section.section_number} {section.title}' の改善提案:")
+                    for suggestion in suggestions:
+                        logger.info(f"  - {suggestion}")
+            
+            return script
+            
+        except Exception as e:
+            logger.error(f"Failed to generate section script: {e}")
+            raise
+    
     def _create_lecture_prompt(self, chapter_title: str, chapter_content: str) -> str:
         """Create prompt for lecture generation.
         
@@ -122,6 +192,57 @@ class ScriptBuilder:
 【制限事項】
 - 生成する講義内容は必ず1800文字以内に収めること
 - 文字数が超過する場合は、詳細を省略して要点のみに絞ること
+
+講義内容を生成してください:"""
+    
+    def _create_section_prompt(self, section: Section, context: Optional[Dict] = None) -> str:
+        """Create prompt for section lecture generation.
+        
+        Args:
+            section: Section object containing title, content, etc.
+            context: Optional context containing related sections info
+            
+        Returns:
+            Formatted prompt string
+        """
+        # コンテキスト情報の構築
+        context_info = ""
+        if context:
+            if "previous_section" in context:
+                prev = context["previous_section"]
+                context_info += f"\n前の中項目: {prev.get('section_number', '')} {prev.get('title', '')}"
+            if "next_section" in context:
+                next_sec = context["next_section"]
+                context_info += f"\n次の中項目: {next_sec.get('section_number', '')} {next_sec.get('title', '')}"
+            if "chapter_overview" in context:
+                context_info += f"\n章の概要: {context['chapter_overview']}"
+        
+        return f"""あなたはオンライン講義の講師です。以下の中項目の内容を、視聴者に向けた分かりやすい講義形式に変換してください。
+
+中項目番号: {section.section_number}
+中項目タイトル: {section.title}
+所属章: {section.parent_chapter}
+{context_info}
+
+中項目の内容:
+{section.text}
+
+要件:
+1. 【重要】合計1200〜1500文字以内で必ず収める（1500文字を超えないこと）
+2. 講師が視聴者に語りかける形式
+3. 導入、本論、まとめの構造を持つ
+4. 中項目の内容を正確に要約しながら、視聴者が理解しやすい説明にする
+5. 専門用語は適切に説明を加える
+6. 日本語で記述する
+7. 段落ごとに改行を入れて、話の区切りを明確にする
+8. 「みなさん」「〜ですね」など、講義らしい表現を使用する
+9. 中項目番号とタイトルを冒頭で明確に紹介する
+10. 所属する章との関連性を意識した説明を行う
+
+【制限事項】
+- 生成する講義内容は必ず1500文字以内に収めること
+- 文字数が超過する場合は、詳細を省略して要点のみに絞ること
+- 章全体ではなく、この中項目に特化した内容にする
 
 講義内容を生成してください:"""
     
@@ -178,6 +299,45 @@ class ScriptBuilder:
                 
         return scripts
     
+    async def generate_scripts_for_sections(self, sections: List[Section]) -> Dict[str, SectionScript]:
+        """Generate lecture scripts for multiple sections.
+        
+        Args:
+            sections: List of Section objects
+            
+        Returns:
+            Dictionary of section_key -> SectionScript
+        """
+        scripts = {}
+        
+        for i, section in enumerate(sections):
+            try:
+                # コンテキスト情報の構築
+                context = {}
+                if i > 0:
+                    prev_section = sections[i-1]
+                    context["previous_section"] = {
+                        "section_number": prev_section.section_number,
+                        "title": prev_section.title
+                    }
+                if i < len(sections) - 1:
+                    next_section = sections[i+1]
+                    context["next_section"] = {
+                        "section_number": next_section.section_number,
+                        "title": next_section.title
+                    }
+                
+                # スクリプト生成
+                script = await self.generate_section_script(section, context)
+                section_key = f"{section.section_number}_{section.title}"
+                scripts[section_key] = script
+                logger.info(f"Generated script for '{section.section_number} {section.title}' with {script.total_chars} characters")
+            except Exception as e:
+                logger.error(f"Failed to generate script for section '{section.section_number} {section.title}': {e}")
+                # Continue with other sections
+                
+        return scripts
+    
     def save_script_to_file(self, script: LectureScript, output_path: Path) -> bool:
         """Save lecture script to text file.
         
@@ -202,6 +362,33 @@ class ScriptBuilder:
             
         except Exception as e:
             logger.error(f"Failed to save script to {output_path}: {e}")
+            return False
+    
+    def save_section_script_to_file(self, script: SectionScript, output_path: Path) -> bool:
+        """Save section script to text file.
+        
+        Args:
+            script: SectionScript to save
+            output_path: Path to save the script file
+            
+        Returns:
+            True if successful
+        """
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(f"# {script.section_number} {script.section_title}\n\n")
+                f.write(f"**所属章:** {script.parent_chapter}\n\n")
+                f.write(script.content)
+                f.write("\n\n# Statistics\n")
+                f.write(f"Total characters: {script.total_chars}\n")
+            
+            logger.info(f"Saved section script to {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save section script to {output_path}: {e}")
             return False
     
     async def generate_scripts_async(

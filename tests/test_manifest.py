@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 
 from pdf_podcast.manifest import (
-    ChapterStatus, ChapterInfo, PodcastManifest, ManifestManager
+    ChapterStatus, ChapterInfo, SectionStatus, SectionInfo, PodcastManifest, ManifestManager
 )
 
 
@@ -94,6 +94,69 @@ class TestChapterInfo:
         assert chapter.text_chars == 500
 
 
+class TestSectionInfo:
+    """Test SectionInfo dataclass."""
+    
+    def test_creation(self):
+        """Test section creation."""
+        section = SectionInfo(
+            title="Data Structures",
+            section_number="1.1",
+            start_page=1,
+            end_page=5,
+            parent_chapter="Chapter 1"
+        )
+        
+        assert section.title == "Data Structures"
+        assert section.section_number == "1.1"
+        assert section.start_page == 1
+        assert section.end_page == 5
+        assert section.parent_chapter == "Chapter 1"
+        assert section.status == SectionStatus.PENDING
+    
+    def test_to_dict(self):
+        """Test section to_dict conversion."""
+        section = SectionInfo(
+            title="Algorithms",
+            section_number="1.2",
+            start_page=6,
+            end_page=10,
+            parent_chapter="Chapter 1",
+            status=SectionStatus.COMPLETED,
+            text_chars=800
+        )
+        
+        data = section.to_dict()
+        assert data["title"] == "Algorithms"
+        assert data["section_number"] == "1.2"
+        assert data["status"] == "completed"
+        assert data["text_chars"] == 800
+    
+    def test_from_dict(self):
+        """Test section from_dict creation."""
+        data = {
+            "title": "Test Section",
+            "section_number": "2.1",
+            "start_page": 11,
+            "end_page": 15,
+            "parent_chapter": "Chapter 2",
+            "status": "completed",
+            "text_chars": 600,
+            "script_path": None,
+            "audio_path": None,
+            "audio_duration": None,
+            "error_message": None,
+            "created_at": None,
+            "updated_at": None
+        }
+        
+        section = SectionInfo.from_dict(data)
+        assert section.title == "Test Section"
+        assert section.section_number == "2.1"
+        assert section.status == SectionStatus.COMPLETED
+        assert section.text_chars == 600
+
+
 class TestPodcastManifest:
     """Test PodcastManifest dataclass."""
     
@@ -103,8 +166,7 @@ class TestPodcastManifest:
             pdf_path="/test/input.pdf",
             output_dir="/test/output",
             model="gemini-test",
-            voice_host="TestHost",
-            voice_guest="TestGuest",
+            voice="TestVoice",
             max_concurrency=2,
             skip_existing=True,
             created_at="2024-01-01T00:00:00",
@@ -123,8 +185,7 @@ class TestPodcastManifest:
             pdf_path="/test/input.pdf",
             output_dir="/test/output",
             model="gemini-test",
-            voice_host="TestHost",
-            voice_guest="TestGuest",
+            voice="TestVoice",
             max_concurrency=2,
             skip_existing=False,
             created_at="2024-01-01T00:00:00",

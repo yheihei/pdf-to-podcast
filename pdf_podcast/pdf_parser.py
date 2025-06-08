@@ -16,12 +16,28 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class Section:
+    """中項目の情報を保持するデータクラス"""
+    title: str
+    section_number: str  # "1.1", "2.3" など
+    start_page: int
+    end_page: int
+    text: str = ""
+    parent_chapter: str = ""  # 所属する章のタイトル
+
+
+@dataclass
 class Chapter:
     """章の情報を保持するデータクラス"""
     title: str
     start_page: int
     end_page: int
     text: str = ""
+    sections: List['Section'] = None
+    
+    def __post_init__(self):
+        if self.sections is None:
+            self.sections = []
 
 
 class PDFParser:
@@ -85,6 +101,38 @@ class PDFParser:
             logger.info(f"Extracted chapter: {chapter.title} (pages {chapter.start_page}-{chapter.end_page})")
         
         return chapters
+    
+    async def extract_sections(self) -> List[Section]:
+        """
+        LLMを使用して中項目を検出し、各中項目のテキストを抽出
+        
+        Returns:
+            Section オブジェクトのリスト
+        """
+        logger.info(f"Extracting sections from {self.pdf_path}")
+        
+        # PDFから中項目構造を検出するためのサンプルテキストを取得
+        sample_text = self._get_sample_text()
+        
+        # LLMで中項目を検出
+        section_info = await self._detect_sections_with_llm(sample_text)
+        
+        # 各中項目のテキストを抽出
+        sections = []
+        for sec in section_info:
+            text = self.extract_text(sec["start_page"], sec["end_page"])
+            section = Section(
+                title=sec["title"],
+                section_number=sec.get("section_number", ""),
+                start_page=sec["start_page"],
+                end_page=sec["end_page"],
+                text=text,
+                parent_chapter=sec.get("parent_chapter", "")
+            )
+            sections.append(section)
+            logger.info(f"Extracted section: {section.section_number} {section.title} (pages {section.start_page}-{section.end_page})")
+        
+        return sections
     
     def extract_text(self, start_page: int, end_page: int) -> str:
         """
@@ -214,3 +262,107 @@ PDFテキスト：
                 "start_page": 1,
                 "end_page": self.total_pages
             }]
+    
+    async def _detect_sections_with_llm(self, sample_text: str) -> List[dict]:
+        """
+        Gemini APIで中項目構造を解析
+        
+        Args:
+            sample_text: 分析対象のテキスト
+            
+        Returns:
+            中項目情報のリスト
+        """
+        try:
+            model = genai.GenerativeModel(self.gemini_model)
+            
+            prompt = f"""あなたはPDF文書の構造を解析する専門家です。
+以下のPDFテキストから中項目（サブセクション）を検出してください。
+
+要件：
+1. 各中項目のタイトル、番号（1.1、1.2、2.1など）、ページ番号を抽出
+2. 章レベル（第1章、第2章など）ではなく、その下の中項目レベルを対象とする
+3. 目次がある場合は優先的に使用
+4. 目次がない場合は本文から推測
+5. ページ番号は本文中に記載されているページ番号を使用
+6. 所属する章の情報も含める
+
+重要：
+- 総ページ数は {self.total_pages} ページです
+- 各中項目の終了ページは次の中項目の開始ページ-1、最後の中項目は該当章の終了ページとします
+- 中項目が検出されない場合は、章レベルでの抽出にフォールバックします
+
+出力は以下のJSON形式で返してください：
+{{
+  "sections": [
+    {{"title": "データ構造の基礎", "section_number": "1.1", "start_page": 1, "end_page": 5, "parent_chapter": "第1章 プログラミング基礎"}},
+    {{"title": "アルゴリズムの基本", "section_number": "1.2", "start_page": 6, "end_page": 15, "parent_chapter": "第1章 プログラミング基礎"}},
+    {{"title": "オブジェクト指向設計", "section_number": "2.1", "start_page": 16, "end_page": 25, "parent_chapter": "第2章 設計パターン"}},
+    ...
+  ]
+}}
+
+PDFテキスト：
+{sample_text}
+"""
+            
+            # Use rate limiter for API call
+            response = await self.rate_limiter.call_with_backoff(
+                model.generate_content, prompt
+            )
+            result_text = response.text.strip()
+            
+            # JSONを抽出（マークダウンコードブロックに囲まれている場合も考慮）
+            if "```json" in result_text:
+                start = result_text.find("```json") + 7
+                end = result_text.find("```", start)
+                result_text = result_text[start:end].strip()
+            elif "```" in result_text:
+                start = result_text.find("```") + 3
+                end = result_text.find("```", start)
+                result_text = result_text[start:end].strip()
+            
+            result = json.loads(result_text)
+            sections = result.get("sections", [])
+            
+            # 中項目が検出されなかった場合のフォールバック（章レベルで抽出）
+            if not sections:
+                logger.warning("No sections detected, falling back to chapter-level extraction")
+                chapter_info = await self._detect_chapters_with_llm(sample_text)
+                sections = []
+                for i, ch in enumerate(chapter_info):
+                    sections.append({
+                        "title": ch["title"],
+                        "section_number": f"{i+1}.0",
+                        "start_page": ch["start_page"],
+                        "end_page": ch["end_page"],
+                        "parent_chapter": ch["title"]
+                    })
+            
+            return sections
+            
+        except Exception as e:
+            logger.error(f"Failed to detect sections with LLM: {e}")
+            # エラー時のフォールバック（章レベルで抽出）
+            logger.warning("Falling back to chapter-level extraction due to error")
+            try:
+                chapter_info = await self._detect_chapters_with_llm(sample_text)
+                sections = []
+                for i, ch in enumerate(chapter_info):
+                    sections.append({
+                        "title": ch["title"],
+                        "section_number": f"{i+1}.0",
+                        "start_page": ch["start_page"],
+                        "end_page": ch["end_page"],
+                        "parent_chapter": ch["title"]
+                    })
+                return sections
+            except Exception as fallback_error:
+                logger.error(f"Fallback to chapters also failed: {fallback_error}")
+                return [{
+                    "title": "全体",
+                    "section_number": "1.0",
+                    "start_page": 1,
+                    "end_page": self.total_pages,
+                    "parent_chapter": "全体"
+                }]

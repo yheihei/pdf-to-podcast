@@ -14,10 +14,10 @@ import logging
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-from .pdf_parser import PDFParser, Chapter
-from .script_builder import ScriptBuilder
+from .pdf_parser import PDFParser, Chapter, Section
+from .script_builder import ScriptBuilder, SectionScript
 from .tts_client import TTSClient
-from .manifest import ManifestManager, ChapterInfo, ChapterStatus
+from .manifest import ManifestManager, ChapterInfo, ChapterStatus, SectionInfo, SectionStatus
 from .logging_system import setup_logger
 from .model_config import ModelConfig
 
@@ -150,22 +150,22 @@ class PodcastGenerator:
             # Print configuration summary
             self._print_configuration()
             
-            # Step 1: Parse PDF and extract chapters
-            self.podcast_logger.print_info("Step 1: Parsing PDF and extracting chapters...")
-            chapters = await self._parse_pdf()
-            if not chapters:
+            # Step 1: Parse PDF and extract sections (中項目対応)
+            self.podcast_logger.print_info("Step 1: Parsing PDF and extracting sections...")
+            sections = await self._parse_pdf_sections()
+            if not sections:
                 return 2
             
             # Step 2: Create or load manifest
-            manifest = await self._setup_manifest(chapters)
+            manifest = await self._setup_section_manifest(sections)
             
             # Step 3: Generate scripts
-            self.podcast_logger.print_info("Step 2: Generating dialogue scripts...")
-            scripts = await self._generate_scripts(chapters)
+            self.podcast_logger.print_info("Step 2: Generating section scripts...")
+            scripts = await self._generate_section_scripts(sections)
             
             # Step 4: Generate audio
-            self.podcast_logger.print_info("Step 3: Generating audio files...")
-            audio_paths = await self._generate_audio(scripts)
+            self.podcast_logger.print_info("Step 3: Generating section audio files...")
+            audio_paths = await self._generate_section_audio(scripts)
             
             # Print final summary
             self._print_completion_summary(None)
@@ -225,6 +225,35 @@ class PodcastGenerator:
             self.podcast_logger.print_error(f"Failed to parse PDF: {str(e)}", e)
             return []
     
+    async def _parse_pdf_sections(self) -> list[Section]:
+        """Parse PDF and extract sections.
+        
+        Returns:
+            List of extracted sections
+        """
+        try:
+            # Initialize PDF parser
+            self.pdf_parser = PDFParser(self.args.input, self.model_config.pdf_model, self.api_key)
+            
+            # Extract sections
+            progress = self.podcast_logger.start_progress()
+            task_id = self.podcast_logger.add_task("Extracting sections from PDF...")
+            
+            sections = await self.pdf_parser.extract_sections()
+            
+            self.podcast_logger.complete_task(task_id, f"Extracted {len(sections)} sections")
+            self.podcast_logger.stop_progress()
+            
+            # Print section summary
+            for i, section in enumerate(sections, 1):
+                self.podcast_logger.print_info(f"Section {i}: {section.section_number} {section.title} (pages {section.start_page}-{section.end_page})")
+            
+            return sections
+            
+        except Exception as e:
+            self.podcast_logger.print_error(f"Failed to parse PDF sections: {str(e)}", e)
+            return []
+    
     async def _setup_manifest(self, chapters: list[Chapter]) -> Optional[Any]:
         """Setup manifest for tracking progress.
         
@@ -268,6 +297,51 @@ class PodcastGenerator:
             
         except Exception as e:
             self.podcast_logger.print_error(f"Failed to setup manifest: {str(e)}", e)
+            return None
+    
+    async def _setup_section_manifest(self, sections: list[Section]) -> Optional[Any]:
+        """Setup section manifest for tracking progress.
+        
+        Args:
+            sections: List of sections from PDF
+            
+        Returns:
+            Manifest object or None if failed
+        """
+        try:
+            # Convert sections to SectionInfo
+            section_infos = []
+            for section in sections:
+                section_info = SectionInfo(
+                    title=section.title,
+                    section_number=section.section_number,
+                    start_page=section.start_page,
+                    end_page=section.end_page,
+                    parent_chapter=section.parent_chapter,
+                    text_chars=len(section.text)
+                )
+                section_infos.append(section_info)
+            
+            # Create section manifest (always create new for section processing)
+            manifest = self.manifest_manager.create_section_manifest(
+                pdf_path=str(self.args.input),
+                output_dir=str(self.output_dir),
+                sections=section_infos,
+                model=f"PDF:{self.model_config.pdf_model}, Script:{self.model_config.script_model}, TTS:{self.model_config.tts_model}",
+                voice=self.args.voice,
+                max_concurrency=self.args.max_concurrency,
+                skip_existing=self.args.skip_existing,
+                bgm_path=self.args.bgm
+            )
+            
+            # Print progress summary
+            summary = self.manifest_manager.get_progress_summary()
+            self.podcast_logger.print_progress_summary(summary)
+            
+            return manifest
+            
+        except Exception as e:
+            self.podcast_logger.print_error(f"Failed to setup section manifest: {str(e)}", e)
             return None
     
     async def _generate_scripts(self, chapters: list[Chapter]) -> Dict[str, Any]:
@@ -438,6 +512,132 @@ class PodcastGenerator:
             self.podcast_logger.print_error(f"Failed to create episode: {str(e)}", e)
             return None
     
+    async def _generate_section_scripts(self, sections: list[Section]) -> Dict[str, Any]:
+        """Generate scripts for sections.
+        
+        Args:
+            sections: List of sections
+            
+        Returns:
+            Dictionary of section scripts
+        """
+        try:
+            # Initialize script builder
+            self.script_builder = ScriptBuilder(self.api_key, self.model_config.script_model)
+            
+            # Setup output directory for scripts
+            scripts_dir = self.output_dir / "scripts" / self.pdf_dirname
+            
+            # Generate scripts for each section
+            self.podcast_logger.start_progress()
+            task_id = self.podcast_logger.add_task(f"Generating section scripts for {len(sections)} sections...", total=len(sections))
+            
+            section_scripts = {}
+            for section in sections:
+                try:
+                    # Generate context for the section
+                    context = {
+                        "parent_chapter": section.parent_chapter,
+                        "section_number": section.section_number,
+                        "total_sections": len(sections)
+                    }
+                    
+                    # Generate script for this section
+                    section_script = await self.script_builder.generate_section_script(section, context)
+                    
+                    # Create section key for storage
+                    section_key = f"{section.section_number}_{section.title}"
+                    section_scripts[section_key] = section_script
+                    
+                    # Save script file
+                    safe_title = "".join(c for c in section.title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    safe_title = safe_title.replace(' ', '_')[:50]
+                    script_filename = f"{section.section_number.replace('.', '_')}_{safe_title}.txt"
+                    script_path = scripts_dir / script_filename
+                    
+                    # Ensure directory exists
+                    script_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Write script content
+                    with open(script_path, 'w', encoding='utf-8') as f:
+                        f.write(section_script.content)
+                    
+                    # Update manifest
+                    self.manifest_manager.update_section(
+                        section_number=section.section_number,
+                        status=SectionStatus.SCRIPT_GENERATED,
+                        script_path=str(script_path),
+                        text_chars=section_script.total_chars
+                    )
+                    
+                    self.podcast_logger.update_task(task_id)
+                    
+                except Exception as e:
+                    self.podcast_logger.print_error(f"Failed to generate script for section {section.section_number}: {str(e)}", e)
+                    # Update manifest with failure
+                    self.manifest_manager.update_section(
+                        section_number=section.section_number,
+                        status=SectionStatus.FAILED,
+                        error_message=str(e)
+                    )
+            
+            self.podcast_logger.complete_task(task_id, f"Generated {len(section_scripts)} section scripts")
+            self.podcast_logger.stop_progress()
+            
+            return section_scripts
+            
+        except Exception as e:
+            self.podcast_logger.print_error(f"Failed to generate section scripts: {str(e)}", e)
+            return {}
+    
+    async def _generate_section_audio(self, section_scripts: Dict[str, Any]) -> Dict[str, Path]:
+        """Generate audio files from section scripts.
+        
+        Args:
+            section_scripts: Dictionary of section scripts
+            
+        Returns:
+            Dictionary of audio file paths
+        """
+        try:
+            # Initialize TTS client with configured model
+            self.tts_client = TTSClient(self.api_key, self.model_config.tts_model)
+            
+            # Setup output directory for audio
+            audio_dir = self.output_dir / "audio" / self.pdf_dirname
+            
+            # Generate audio asynchronously
+            self.podcast_logger.start_progress()
+            task_id = self.podcast_logger.add_task(f"Generating audio for {len(section_scripts)} sections...", total=len(section_scripts))
+            
+            audio_paths = await self.tts_client.generate_section_audios_async(
+                section_scripts=section_scripts,
+                output_dir=audio_dir,
+                voice=self.args.voice,
+                max_concurrency=self.args.max_concurrency,
+                skip_existing=self.args.skip_existing
+            )
+            
+            # Update manifest with audio information
+            for section_key, audio_path in audio_paths.items():
+                # Extract section number from section key
+                section_number = section_key.split('_')[0].replace('_', '.')
+                self.manifest_manager.update_section(
+                    section_number=section_number,
+                    status=SectionStatus.AUDIO_GENERATED,
+                    audio_path=str(audio_path)
+                )
+                self.podcast_logger.update_task(task_id)
+            
+            self.podcast_logger.complete_task(task_id, f"Generated {len(audio_paths)} audio files")
+            self.podcast_logger.stop_progress()
+            
+            return audio_paths
+            
+        except Exception as e:
+            self.podcast_logger.print_error(f"Failed to generate section audio: {str(e)}", e)
+            return {}
+    
     def _print_completion_summary(self, _: Optional[Path]) -> None:
         """Print completion summary.
         
@@ -446,7 +646,7 @@ class PodcastGenerator:
         """
         self.podcast_logger.print_header("Podcast Generation Complete!")
         
-        self.podcast_logger.print_success(f"Chapter audio files generated successfully!")
+        self.podcast_logger.print_success(f"Section audio files generated successfully!")
         
         # Print output files
         self.podcast_logger.print_info("Output files:")

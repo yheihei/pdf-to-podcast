@@ -4,12 +4,15 @@ import asyncio
 import logging
 import time
 import random
-from typing import Dict, Optional
+from typing import Dict, Optional, List, TYPE_CHECKING
 from dataclasses import dataclass
 from google import genai
 from google.genai import types
 import wave
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from .script_builder import SectionScript
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +156,49 @@ class TTSClient:
             except Exception as e:
                 logger.error(f"Failed to generate audio for chapter '{title}': {e}")
                 # Continue with other chapters
+        
+        return audio_paths
+    
+    def generate_section_audios(
+        self,
+        section_scripts: Dict[str, 'SectionScript'],
+        output_dir: Path,
+        voice: str = "Kore"
+    ) -> Dict[str, Path]:
+        """Generate audio files for multiple section scripts.
+        
+        Args:
+            section_scripts: Dictionary of section_key -> SectionScript object
+            output_dir: Directory to save audio files
+            voice: Voice name for the lecturer
+            
+        Returns:
+            Dictionary of section_key -> audio_file_path
+        """
+        audio_paths = {}
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        for section_key, section_script in section_scripts.items():
+            try:
+                # Generate filename based on section number and title
+                safe_title = "".join(c for c in section_script.section_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_title = safe_title.replace(' ', '_')[:30]  # Limit length
+                filename = f"{section_script.section_number.replace('.', '_')}_{safe_title}.mp3"
+                output_path = output_dir / filename
+                
+                # Generate audio
+                self.generate_audio(
+                    lecture_content=section_script.content,
+                    voice=voice,
+                    output_path=output_path
+                )
+                
+                audio_paths[section_key] = output_path
+                logger.info(f"Generated audio for '{section_script.section_number} {section_script.section_title}' -> {filename}")
+                
+            except Exception as e:
+                logger.error(f"Failed to generate audio for section '{section_script.section_number} {section_script.section_title}': {e}")
+                # Continue with other sections
         
         return audio_paths
     
@@ -309,5 +355,91 @@ class TTSClient:
                 audio_paths[title] = result
             elif isinstance(result, Exception):
                 logger.error(f"Exception processing chapter '{title}': {result}")
+        
+        return audio_paths
+    
+    async def generate_section_audios_async(
+        self,
+        section_scripts: Dict[str, 'SectionScript'],
+        output_dir: Path,
+        voice: str = "Kore",
+        max_concurrency: int = 1,  # Fixed to 1 for Free tier rate limit compliance
+        skip_existing: bool = False,
+        max_retries: int = 3
+    ) -> Dict[str, Path]:
+        """Generate audio files for multiple section scripts asynchronously.
+        
+        Args:
+            section_scripts: Dictionary of section_key -> SectionScript object
+            output_dir: Directory to save audio files
+            voice: Voice name for the lecturer
+            max_concurrency: Maximum number of concurrent requests
+            skip_existing: Skip existing audio files
+            max_retries: Maximum retry attempts for rate limits
+            
+        Returns:
+            Dictionary of section_key -> audio_file_path
+        """
+        # Force max_concurrency to 1 for Free tier compliance
+        actual_concurrency = 1
+        semaphore = asyncio.Semaphore(actual_concurrency)
+        
+        if max_concurrency > 1:
+            logger.warning(f"max_concurrency reduced from {max_concurrency} to 1 for Free tier rate limit compliance")
+        audio_paths = {}
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        async def process_section(section_key: str, section_script: 'SectionScript') -> Optional[Path]:
+            async with semaphore:
+                try:
+                    # Generate filename based on section number and title
+                    safe_title = "".join(c for c in section_script.section_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    safe_title = safe_title.replace(' ', '_')[:30]  # Limit length
+                    filename = f"{section_script.section_number.replace('.', '_')}_{safe_title}.mp3"
+                    output_path = output_dir / filename
+                    
+                    # Check if file already exists and skip if requested
+                    if skip_existing and output_path.exists():
+                        logger.info(f"Skipping existing audio file: {filename}")
+                        return output_path
+                    
+                    # Generate audio with retry logic
+                    audio_data = await self.generate_audio_with_retry(
+                        lecture_content=section_script.content,
+                        voice=voice,
+                        output_path=output_path,
+                        max_retries=max_retries
+                    )
+                    
+                    if audio_data is not None:
+                        logger.info(f"Generated audio for '{section_script.section_number} {section_script.section_title}' -> {filename}")
+                        return output_path
+                    else:
+                        logger.error(f"Failed to generate audio for section '{section_script.section_number} {section_script.section_title}'")
+                        return None
+                        
+                except Exception as e:
+                    logger.error(f"Error processing section '{section_script.section_number} {section_script.section_title}': {e}")
+                    return None
+        
+        # Process sections with rate limiting (sequential with delays)
+        results = []
+        section_items = list(section_scripts.items())
+        for idx, (section_key, section_script) in enumerate(section_items):
+            # Add delay between requests to respect rate limits (2 per minute = 30s between requests)
+            if idx > 0:
+                delay = 31  # 31 seconds to be safe with 2/minute limit
+                logger.info(f"Waiting {delay}s before next request to respect rate limits...")
+                await asyncio.sleep(delay)
+            
+            result = await process_section(section_key, section_script)
+            results.append(result)
+        
+        # Collect successful results
+        for (section_key, _), result in zip(section_items, results):
+            if isinstance(result, Path):
+                audio_paths[section_key] = result
+            elif isinstance(result, Exception):
+                logger.error(f"Exception processing section '{section_key}': {result}")
         
         return audio_paths
