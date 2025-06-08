@@ -127,9 +127,10 @@ class TestAudioQualityChecker:
     @patch('pdf_podcast.audio_quality_checker.librosa')
     def test_detect_silence_ratio_with_librosa(self, mock_librosa):
         """Test silence detection with librosa available."""
+        import numpy as np
         # Mock librosa functions
-        mock_librosa.load.return_value = ([0.1, 0.05, 0.0, 0.0, 0.2], 24000)
-        mock_librosa.feature.rms.return_value = [[0.1, 0.05, 0.01, 0.01, 0.2]]
+        mock_librosa.load.return_value = (np.array([0.1, 0.05, 0.0, 0.0, 0.2]), 24000)
+        mock_librosa.feature.rms.return_value = np.array([[0.1, 0.05, 0.01, 0.01, 0.2]])
         
         test_file = self.create_test_wav_file()
         try:
