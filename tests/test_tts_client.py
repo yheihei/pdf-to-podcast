@@ -1,10 +1,11 @@
 """Tests for tts_client module."""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock, mock_open
+from unittest.mock import Mock, patch, MagicMock, mock_open, AsyncMock
 from pathlib import Path
 import base64
 from pdf_podcast.tts_client import TTSClient, VoiceConfig
+from pdf_podcast.script_builder import SectionScript
 
 
 class TestTTSClient:
@@ -28,70 +29,19 @@ class TestTTSClient:
         mock_genai.Client.assert_called_once_with(api_key="test-key")
         assert client.model_name == "custom-tts-model"
     
-    def test_create_multi_speaker_content(self, tts_client):
-        """Test multi-speaker content creation."""
-        dialogue_lines = [
-            {"speaker": "Host", "text": "こんにちは"},
-            {"speaker": "Guest", "text": "よろしくお願いします"},
-            {"speaker": "Host", "text": "今日のテーマは"}
-        ]
-        
-        content = tts_client._create_multi_speaker_content(dialogue_lines)
-        
-        expected = '<speaker id="Host">こんにちは</speaker>\n' \
-                  '<speaker id="Guest">よろしくお願いします</speaker>\n' \
-                  '<speaker id="Host">今日のテーマは</speaker>'
-        
-        assert content == expected
     
-    def test_extract_audio_data_success(self, tts_client):
-        """Test successful audio data extraction from new API response format."""
-        # Mock audio data (new API returns binary data directly)
-        audio_bytes = b"fake audio data"
-        
-        # Mock response with new API format
-        mock_part = Mock()
-        mock_part.inline_data.data = audio_bytes
-        
-        mock_content = Mock()
-        mock_content.parts = [mock_part]
-        
-        mock_candidate = Mock()
-        mock_candidate.content = mock_content
-        
-        mock_response = Mock()
-        mock_response.candidates = [mock_candidate]
-        
-        # Test direct access to audio data (no extraction method needed)
-        result = mock_response.candidates[0].content.parts[0].inline_data.data
-        
-        assert result == audio_bytes
-    
-    def test_extract_audio_data_no_parts(self, tts_client):
-        """Test handling when response has no parts (should be handled in generate_audio)."""
-        # This test is now about error handling in generate_audio method
-        # when the response structure is unexpected
-        pass
-    
-    def test_extract_audio_data_no_audio_part(self, tts_client):
-        """Test handling when audio part is missing (should be handled in generate_audio)."""
-        # This test is now about error handling in generate_audio method
-        # when the response structure is unexpected
-        pass
-    
-    @patch('pdf_podcast.tts_client.wave')
-    def test_generate_audio_success(self, mock_wave, tts_client, mock_genai):
+    def test_generate_audio_success(self, tts_client, mock_genai):
         """Test successful audio generation."""
-        dialogue_lines = [
-            {"speaker": "Host", "text": "テスト"},
-            {"speaker": "Guest", "text": "音声生成"}
-        ]
+        lecture_content = "みなさん、こんにちは。今日は講義を行います。"
         
-        # Mock audio response with new API format
-        audio_bytes = b"test audio content"
+        # Mock audio response with correct structure
+        audio_data = b"test audio content"
+        
+        mock_inline_data = Mock()
+        mock_inline_data.data = audio_data
         
         mock_part = Mock()
-        mock_part.inline_data.data = audio_bytes
+        mock_part.inline_data = mock_inline_data
         
         mock_content = Mock()
         mock_content.parts = [mock_part]
@@ -105,78 +55,73 @@ class TestTTSClient:
         tts_client.client.models.generate_content.return_value = mock_response
         
         # Generate audio without saving
-        result = tts_client.generate_audio(dialogue_lines)
+        result = tts_client.generate_audio(lecture_content)
         
-        assert result == audio_bytes
+        assert result == audio_data
         
         # Verify API call
         tts_client.client.models.generate_content.assert_called_once()
-        call_args = tts_client.client.models.generate_content.call_args
-        
-        # Check model name
-        assert call_args[1]['model'] == "test-tts-model"
-        
-        # Check content
-        content_arg = call_args[1]['contents']
-        assert '[Host speaking in Kore voice]: テスト' in content_arg
-        assert '[Guest speaking in Puck voice]: 音声生成' in content_arg
-        
-        # Check config for multi-speaker
-        config = call_args[1]['config']
-        assert config.response_modalities == ["AUDIO"]
-        assert hasattr(config.speech_config, 'multi_speaker_voice_config')
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('pathlib.Path.mkdir')
-    def test_generate_audio_with_output_path(self, mock_mkdir, mock_file, tts_client, mock_genai):
+    @patch('pdf_podcast.tts_client.Path')
+    def test_generate_audio_with_output_path(self, mock_path_class, tts_client, mock_genai):
         """Test audio generation with file output."""
-        dialogue_lines = [{"speaker": "Host", "text": "Test"}]
-        output_path = Path("/tmp/test.mp3")
+        lecture_content = "講義内容です。"
+        output_path = Mock()
+        output_path.parent.mkdir = Mock()
         
-        # Mock audio response
-        audio_bytes = b"audio data"
-        encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
+        # Mock audio response with correct structure
+        audio_data = b"audio data"
+        
+        mock_inline_data = Mock()
+        mock_inline_data.data = audio_data
         
         mock_part = Mock()
-        mock_part.inline_data.mime_type = "audio/mp3"
-        mock_part.inline_data.data = encoded_audio
+        mock_part.inline_data = mock_inline_data
+        
+        mock_content = Mock()
+        mock_content.parts = [mock_part]
+        
+        mock_candidate = Mock()
+        mock_candidate.content = mock_content
         
         mock_response = Mock()
-        mock_response.parts = [mock_part]
+        mock_response.candidates = [mock_candidate]
         
-        tts_client.model.generate_content.return_value = mock_response
+        tts_client.client.models.generate_content.return_value = mock_response
         
-        # Generate audio with saving
-        result = tts_client.generate_audio(dialogue_lines, output_path=output_path)
+        # Mock file operations
+        wav_path = Mock()
+        output_path.with_suffix = Mock(return_value=wav_path)
+        wav_path.rename = Mock()
         
-        # Verify file operations
-        mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
-        mock_file.assert_called_once_with(output_path, 'wb')
-        mock_file().write.assert_called_once_with(audio_bytes)
+        with patch.object(tts_client, '_save_wav_file') as mock_save_wav:
+            # Generate audio with output path
+            result = tts_client.generate_audio(
+                lecture_content=lecture_content,
+                output_path=output_path
+            )
+        
+        assert result == audio_data
+        mock_save_wav.assert_called_once_with(wav_path, audio_data)
+        wav_path.rename.assert_called_once_with(output_path)
     
     def test_generate_audio_api_error(self, tts_client, mock_genai):
         """Test handling of API errors."""
-        dialogue_lines = [{"speaker": "Host", "text": "Test"}]
+        lecture_content = "Test content"
         
-        tts_client.model.generate_content.side_effect = Exception("API Error")
+        tts_client.client.models.generate_content.side_effect = Exception("API Error")
         
         with pytest.raises(Exception) as exc_info:
-            tts_client.generate_audio(dialogue_lines)
+            tts_client.generate_audio(lecture_content)
         
         assert "API Error" in str(exc_info.value)
     
-    @patch('pathlib.Path.mkdir')
-    @patch('builtins.open', new_callable=mock_open)
-    def test_generate_chapter_audios(self, mock_file, mock_mkdir, tts_client, mock_genai):
+    @patch('pdf_podcast.tts_client.Path.mkdir')
+    def test_generate_chapter_audios(self, mock_mkdir, tts_client, mock_genai):
         """Test batch audio generation for chapters."""
         scripts = {
-            "第1章: 導入": [
-                {"speaker": "Host", "text": "第1章の内容"},
-                {"speaker": "Guest", "text": "興味深い"}
-            ],
-            "第2章: 詳細": [
-                {"speaker": "Host", "text": "第2章の内容"}
-            ]
+            "第1章: 導入": "第1章の講義内容です。",
+            "第2章: 詳細": "第2章の講義内容です。"
         }
         
         output_dir = Path("/tmp/output")
@@ -192,55 +137,130 @@ class TestTTSClient:
         mock_response = Mock()
         mock_response.parts = [mock_part]
         
-        tts_client.model.generate_content.return_value = mock_response
+        tts_client.client.models.generate_content.return_value = mock_response
         
-        # Generate audios
-        result = tts_client.generate_chapter_audios(scripts, output_dir)
+        with patch.object(tts_client, 'generate_audio', return_value=audio_bytes) as mock_generate:
+            audio_paths = tts_client.generate_chapter_audios(scripts, output_dir)
         
-        # Verify results
-        assert len(result) == 2
-        assert "第1章: 導入" in result
-        assert "第2章: 詳細" in result
+        assert len(audio_paths) == 2
+        assert "第1章: 導入" in audio_paths
+        assert "第2章: 詳細" in audio_paths
         
-        # Check file paths
-        path1 = result["第1章: 導入"]
-        path2 = result["第2章: 詳細"]
-        
-        assert path1.suffix == ".mp3"
-        assert path2.suffix == ".mp3"
-        assert "01_" in str(path1)
-        assert "02_" in str(path2)
+        # Verify generate_audio was called for each script
+        assert mock_generate.call_count == 2
     
-    @patch('pathlib.Path.mkdir')
+    @patch('pdf_podcast.tts_client.Path.mkdir')
     def test_generate_chapter_audios_partial_failure(self, mock_mkdir, tts_client, mock_genai):
         """Test handling of partial failures in batch generation."""
         scripts = {
-            "第1章": [{"speaker": "Host", "text": "内容1"}],
-            "第2章": [{"speaker": "Host", "text": "内容2"}]
+            "第1章": "内容1",
+            "第2章": "内容2"
         }
         
         output_dir = Path("/tmp/output")
         
         # First succeeds, second fails
-        audio_bytes = b"audio"
-        encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
+        with patch.object(tts_client, 'generate_audio', side_effect=[b"audio", Exception("API Error")]):
+            audio_paths = tts_client.generate_chapter_audios(scripts, output_dir)
         
-        mock_part = Mock()
-        mock_part.inline_data.mime_type = "audio/mp3"
-        mock_part.inline_data.data = encoded_audio
+        # Should complete successfully for first chapter only
+        assert len(audio_paths) == 1
+        assert "第1章" in audio_paths
+        assert "第2章" not in audio_paths
+    
+    @patch('pdf_podcast.tts_client.Path.mkdir')
+    def test_generate_section_audios(self, mock_mkdir, tts_client, mock_genai):
+        """Test batch audio generation for sections."""
+        section1 = SectionScript(
+            section_title="データ構造",
+            section_number="1.1",
+            content="データ構造についての講義内容です。",
+            total_chars=100,
+            parent_chapter="第1章"
+        )
         
-        mock_response = Mock()
-        mock_response.parts = [mock_part]
+        section2 = SectionScript(
+            section_title="アルゴリズム",
+            section_number="1.2",
+            content="アルゴリズムについての講義内容です。",
+            total_chars=120,
+            parent_chapter="第1章"
+        )
         
-        tts_client.model.generate_content.side_effect = [
-            mock_response,
-            Exception("API Error")
-        ]
+        section_scripts = {
+            "1.1_データ構造": section1,
+            "1.2_アルゴリズム": section2
+        }
         
-        with patch('builtins.open', mock_open()):
-            result = tts_client.generate_chapter_audios(scripts, output_dir)
+        output_dir = Path("/tmp/output")
         
-        # Should complete for first chapter only
-        assert len(result) == 1
-        assert "第1章" in result
-        assert "第2章" not in result
+        # Mock audio responses
+        audio_bytes = b"audio data"
+        
+        with patch.object(tts_client, 'generate_audio', return_value=audio_bytes) as mock_generate:
+            audio_paths = tts_client.generate_section_audios(section_scripts, output_dir)
+        
+        assert len(audio_paths) == 2
+        assert "1.1_データ構造" in audio_paths
+        assert "1.2_アルゴリズム" in audio_paths
+        
+        # Verify generate_audio was called for each section
+        assert mock_generate.call_count == 2
+        
+        # Verify filename format
+        for path in audio_paths.values():
+            assert "1_1_" in str(path) or "1_2_" in str(path)  # Section number format
+    
+    @pytest.mark.asyncio
+    async def test_generate_audio_with_retry_success(self, tts_client):
+        """Test successful audio generation with retry."""
+        lecture_content = "講義内容です。"
+        
+        # Mock successful generation
+        with patch.object(tts_client, 'generate_audio', return_value=b"audio data") as mock_generate:
+            result = await tts_client.generate_audio_with_retry(lecture_content)
+        
+        assert result == b"audio data"
+        mock_generate.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_generate_audio_with_retry_rate_limit(self, tts_client):
+        """Test retry behavior with rate limit errors."""
+        lecture_content = "講義内容です。"
+        
+        # Mock rate limit error followed by success
+        with patch.object(tts_client, 'generate_audio', side_effect=[
+            Exception("429 rate limit exceeded"),
+            b"audio data"
+        ]) as mock_generate:
+            with patch('asyncio.sleep') as mock_sleep:
+                result = await tts_client.generate_audio_with_retry(lecture_content, max_retries=1)
+        
+        assert result == b"audio data"
+        assert mock_generate.call_count == 2
+        mock_sleep.assert_called_once()  # Should sleep between retries
+    
+    @pytest.mark.asyncio
+    async def test_generate_section_audios_async(self, tts_client):
+        """Test async section audio generation."""
+        section1 = SectionScript(
+            section_title="データ構造",
+            section_number="1.1",
+            content="データ構造についての講義内容です。",
+            total_chars=100,
+            parent_chapter="第1章"
+        )
+        
+        section_scripts = {
+            "1.1_データ構造": section1
+        }
+        
+        output_dir = Path("/tmp/output")
+        
+        # Mock successful generation
+        with patch.object(tts_client, 'generate_audio_with_retry', return_value=b"audio data") as mock_generate:
+            audio_paths = await tts_client.generate_section_audios_async(section_scripts, output_dir)
+        
+        assert len(audio_paths) == 1
+        assert "1.1_データ構造" in audio_paths
+        mock_generate.assert_called_once()

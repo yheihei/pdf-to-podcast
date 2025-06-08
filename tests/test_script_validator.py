@@ -2,7 +2,7 @@
 
 import pytest
 from pdf_podcast.script_validator import ScriptValidator, ValidationResult
-from pdf_podcast.script_builder import DialogueScript
+from pdf_podcast.script_builder import SectionScript
 
 
 class TestScriptValidator:
