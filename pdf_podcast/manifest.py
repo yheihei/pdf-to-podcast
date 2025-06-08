@@ -55,8 +55,7 @@ class PodcastManifest:
     pdf_path: str
     output_dir: str
     model: str
-    voice_host: str
-    voice_guest: str
+    voice: str
     max_concurrency: int
     skip_existing: bool
     created_at: str
@@ -98,8 +97,7 @@ class ManifestManager:
         output_dir: str,
         chapters: List[ChapterInfo],
         model: str = "gemini-2.5-pro-preview-tts",
-        voice_host: str = "Kore",
-        voice_guest: str = "Puck",
+        voice: str = "Kore",
         max_concurrency: int = 4,
         skip_existing: bool = False,
         bgm_path: Optional[str] = None
@@ -111,8 +109,7 @@ class ManifestManager:
             output_dir: Output directory path
             chapters: List of chapter information
             model: Gemini model name
-            voice_host: Host voice name
-            voice_guest: Guest voice name
+            voice: Lecturer voice name
             max_concurrency: Maximum concurrent processes
             skip_existing: Skip existing files flag
             bgm_path: Optional BGM file path
@@ -126,8 +123,7 @@ class ManifestManager:
             pdf_path=pdf_path,
             output_dir=output_dir,
             model=model,
-            voice_host=voice_host,
-            voice_guest=voice_guest,
+            voice=voice,
             max_concurrency=max_concurrency,
             skip_existing=skip_existing,
             created_at=now,

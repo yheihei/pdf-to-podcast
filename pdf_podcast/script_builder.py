@@ -2,26 +2,27 @@
 
 import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from pathlib import Path
 import google.generativeai as genai
 from dataclasses import dataclass
 
 from .rate_limiter import GeminiRateLimiter, RateLimitConfig
+from .script_validator import ScriptValidator
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DialogueScript:
-    """Represents a dialogue script with host and guest lines."""
+class LectureScript:
+    """Represents a lecture script for a single speaker."""
     chapter_title: str
-    lines: List[Dict[str, str]]  # List of {"speaker": "Host/Guest", "text": "..."}
+    content: str  # Lecture content as a single formatted text
     total_chars: int
 
 
 class ScriptBuilder:
-    """Generates podcast dialogue scripts from chapter content using Gemini API."""
+    """Generates podcast lecture scripts from chapter content using Gemini API."""
     
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-pro-preview-06-05"):
         """Initialize ScriptBuilder with Gemini API configuration.
@@ -37,19 +38,22 @@ class ScriptBuilder:
         rate_limit_config = RateLimitConfig(rpm_limit=15)  # Free tier
         self.rate_limiter = GeminiRateLimiter(rate_limit_config)
         
-    async def generate_dialogue_script(self, chapter_title: str, chapter_content: str) -> DialogueScript:
-        """Generate a dialogue script from chapter content.
+        # スクリプト検証の初期化
+        self.validator = ScriptValidator()
+        
+    async def generate_lecture_script(self, chapter_title: str, chapter_content: str) -> LectureScript:
+        """Generate a lecture script from chapter content.
         
         Args:
             chapter_title: Title of the chapter
             chapter_content: Full text content of the chapter
             
         Returns:
-            DialogueScript object containing the dialogue
+            LectureScript object containing the lecture
         """
-        logger.info(f"Generating dialogue script for chapter: {chapter_title}")
+        logger.info(f"Generating lecture script for chapter: {chapter_title}")
         
-        prompt = self._create_dialogue_prompt(chapter_title, chapter_content)
+        prompt = self._create_lecture_prompt(chapter_title, chapter_content)
         
         try:
             # Use rate limiter for API call
@@ -60,22 +64,36 @@ class ScriptBuilder:
             # Debug: Log the raw response
             logger.info(f"Raw API response for '{chapter_title}': {response.text[:500]}...")
             
-            dialogue_lines = self._parse_dialogue_response(response.text)
+            lecture_content = self._parse_lecture_response(response.text)
             
-            total_chars = sum(len(line["text"]) for line in dialogue_lines)
+            total_chars = len(lecture_content)
             
-            return DialogueScript(
+            script = LectureScript(
                 chapter_title=chapter_title,
-                lines=dialogue_lines,
+                content=lecture_content,
                 total_chars=total_chars
             )
             
+            # スクリプト検証の実行
+            validation_result = self.validator.validate_script(script)
+            self.validator.log_validation_results(validation_result, chapter_title)
+            
+            # 改善提案の表示
+            if not validation_result.is_valid or validation_result.has_warnings:
+                suggestions = self.validator.get_improvement_suggestions(validation_result)
+                if suggestions:
+                    logger.info(f"章 '{chapter_title}' の改善提案:")
+                    for suggestion in suggestions:
+                        logger.info(f"  - {suggestion}")
+            
+            return script
+            
         except Exception as e:
-            logger.error(f"Failed to generate dialogue script: {e}")
+            logger.error(f"Failed to generate lecture script: {e}")
             raise
     
-    def _create_dialogue_prompt(self, chapter_title: str, chapter_content: str) -> str:
-        """Create prompt for dialogue generation.
+    def _create_lecture_prompt(self, chapter_title: str, chapter_content: str) -> str:
+        """Create prompt for lecture generation.
         
         Args:
             chapter_title: Title of the chapter
@@ -84,7 +102,7 @@ class ScriptBuilder:
         Returns:
             Formatted prompt string
         """
-        return f"""あなたはポッドキャストの台本作成者です。以下の章の内容を、ホストとゲストの自然な対話形式に変換してください。
+        return f"""あなたはオンライン講義の講師です。以下の章の内容を、視聴者に向けた分かりやすい講義形式に変換してください。
 
 章タイトル: {chapter_title}
 
@@ -92,114 +110,79 @@ class ScriptBuilder:
 {chapter_content}
 
 要件:
-1. 10分で聴ける長さ（合計2800〜3000文字程度）
-2. HostとGuestの2人による自然な対話形式
-3. 各発言は必ず「Host:」または「Guest:」で始める
-4. 内容を正確に要約しながら、リスナーが理解しやすい対話にする
+1. 【重要】合計1500〜1800文字以内で必ず収める（1800文字を超えないこと）
+2. 講師が視聴者に語りかける形式
+3. 導入、本論、まとめの構造を持つ
+4. 内容を正確に要約しながら、視聴者が理解しやすい説明にする
 5. 専門用語は適切に説明を加える
 6. 日本語で記述する
+7. 段落ごとに改行を入れて、話の区切りを明確にする
+8. 「みなさん」「〜ですね」など、講義らしい表現を使用する
 
-出力形式:
-Host: [ホストの発言]
-Guest: [ゲストの発言]
-Host: [ホストの発言]
-...
+【制限事項】
+- 生成する講義内容は必ず1800文字以内に収めること
+- 文字数が超過する場合は、詳細を省略して要点のみに絞ること
 
-対話を生成してください:"""
+講義内容を生成してください:"""
     
-    def _parse_dialogue_response(self, response_text: str) -> List[Dict[str, str]]:
-        """Parse dialogue response into structured format.
+    def _parse_lecture_response(self, response_text: str) -> str:
+        """Parse lecture response into formatted text.
         
         Args:
             response_text: Raw response from Gemini API
             
         Returns:
-            List of dialogue entries
+            Formatted lecture content
         """
         logger.info(f"Parsing response text length: {len(response_text)}")
         logger.info(f"First 200 chars: {response_text[:200]}")
         
-        lines = []
-        current_speaker = None
-        current_text = []
+        # Clean up the response text
+        cleaned_text = response_text.strip()
         
-        for line in response_text.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Handle both "Host:" and "**Host:**" formats
-            if line.startswith('Host:') or line.startswith('**Host:**'):
-                if current_speaker and current_text:
-                    lines.append({
-                        "speaker": current_speaker,
-                        "text": ' '.join(current_text).strip()
-                    })
-                current_speaker = "Host"
-                # Extract text after "Host:" or "**Host:**"
-                if line.startswith('**Host:**'):
-                    current_text = [line[9:].strip()]  # Skip "**Host:**"
-                else:
-                    current_text = [line[5:].strip()]  # Skip "Host:"
-                
-            elif line.startswith('Guest:') or line.startswith('**Guest:**'):
-                if current_speaker and current_text:
-                    lines.append({
-                        "speaker": current_speaker,
-                        "text": ' '.join(current_text).strip()
-                    })
-                current_speaker = "Guest"
-                # Extract text after "Guest:" or "**Guest:**"
-                if line.startswith('**Guest:**'):
-                    current_text = [line[10:].strip()]  # Skip "**Guest:**"
-                else:
-                    current_text = [line[6:].strip()]  # Skip "Guest:"
-                
-            else:
-                # Continuation of previous speaker's text
-                if current_text:
-                    current_text.append(line)
+        # Ensure proper paragraph separation
+        paragraphs = []
+        for paragraph in cleaned_text.split('\n'):
+            paragraph = paragraph.strip()
+            if paragraph:
+                paragraphs.append(paragraph)
         
-        # Add the last speaker's text
-        if current_speaker and current_text:
-            lines.append({
-                "speaker": current_speaker,
-                "text": ' '.join(current_text).strip()
-            })
+        # Join paragraphs with double newlines for clear separation
+        lecture_content = '\n\n'.join(paragraphs)
         
-        logger.info(f"Parsed {len(lines)} dialogue lines")
-        if len(lines) == 0:
-            logger.warning("No dialogue lines were parsed from the response!")
+        logger.info(f"Parsed lecture with {len(paragraphs)} paragraphs")
+        if not lecture_content:
+            logger.warning("No lecture content was parsed from the response!")
         
-        return lines
+        return lecture_content
     
-    def generate_scripts_for_chapters(self, chapters: Dict[str, str]) -> Dict[str, DialogueScript]:
-        """Generate dialogue scripts for multiple chapters.
+    def generate_scripts_for_chapters(self, chapters: Dict[str, str]) -> Dict[str, LectureScript]:
+        """Generate lecture scripts for multiple chapters.
         
         Args:
             chapters: Dictionary of chapter_title -> chapter_content
             
         Returns:
-            Dictionary of chapter_title -> DialogueScript
+            Dictionary of chapter_title -> LectureScript
         """
         scripts = {}
         
         for title, content in chapters.items():
             try:
-                script = self.generate_dialogue_script(title, content)
+                script = self.generate_lecture_script(title, content)
                 scripts[title] = script
-                logger.info(f"Generated script for '{title}' with {len(script.lines)} dialogue lines")
+                logger.info(f"Generated script for '{title}' with {script.total_chars} characters")
             except Exception as e:
                 logger.error(f"Failed to generate script for chapter '{title}': {e}")
                 # Continue with other chapters
                 
         return scripts
     
-    def save_script_to_file(self, script: DialogueScript, output_path: Path) -> bool:
-        """Save dialogue script to text file.
+    def save_script_to_file(self, script: LectureScript, output_path: Path) -> bool:
+        """Save lecture script to text file.
         
         Args:
-            script: DialogueScript to save
+            script: LectureScript to save
             output_path: Path to save the script file
             
         Returns:
@@ -210,13 +193,9 @@ Host: [ホストの発言]
             
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(f"# {script.chapter_title}\n\n")
-                
-                for line in script.lines:
-                    f.write(f"{line['speaker']}: {line['text']}\n\n")
-                
-                f.write(f"# Statistics\n")
+                f.write(script.content)
+                f.write("\n\n# Statistics\n")
                 f.write(f"Total characters: {script.total_chars}\n")
-                f.write(f"Total lines: {len(script.lines)}\n")
             
             logger.info(f"Saved script to {output_path}")
             return True
@@ -231,8 +210,8 @@ Host: [ホストの発言]
         output_dir: Optional[Path] = None,
         max_concurrency: int = 1,
         skip_existing: bool = False
-    ) -> Dict[str, DialogueScript]:
-        """Generate dialogue scripts for multiple chapters asynchronously.
+    ) -> Dict[str, LectureScript]:
+        """Generate lecture scripts for multiple chapters asynchronously.
         
         Args:
             chapters: Dictionary of chapter_title -> chapter_content
@@ -241,7 +220,7 @@ Host: [ホストの発言]
             skip_existing: Skip chapters with existing script files
             
         Returns:
-            Dictionary of chapter_title -> DialogueScript
+            Dictionary of chapter_title -> LectureScript
         """
         # Force max_concurrency to 1 for Free tier compliance
         actual_concurrency = 1
@@ -251,7 +230,7 @@ Host: [ホストの発言]
             logger.warning(f"max_concurrency reduced from {max_concurrency} to 1 for Free tier rate limit compliance")
         scripts = {}
         
-        async def process_chapter(title: str, content: str) -> Optional[DialogueScript]:
+        async def process_chapter(title: str, content: str) -> Optional[LectureScript]:
             async with semaphore:
                 try:
                     # Check if script file already exists
@@ -265,7 +244,7 @@ Host: [ホストの発言]
                             return None
                     
                     # Generate script (now async)
-                    script = await self.generate_dialogue_script(title, content)
+                    script = await self.generate_lecture_script(title, content)
                     
                     # Save to file if output directory specified
                     if output_dir:
@@ -286,9 +265,9 @@ Host: [ホストの発言]
         
         # Collect successful results
         for (title, _), result in zip(chapters.items(), results):
-            if isinstance(result, DialogueScript):
+            if isinstance(result, LectureScript):
                 scripts[title] = result
-                logger.info(f"Generated script for '{title}' with {len(result.lines)} dialogue lines")
+                logger.info(f"Generated script for '{title}' with {result.total_chars} characters")
             elif isinstance(result, Exception):
                 logger.error(f"Exception processing chapter '{title}': {result}")
         

@@ -1,278 +1,136 @@
 # PDF Podcast Generator
 
-PDFファイルから対話形式のポッドキャスト音声を自動生成するPython CLIツールです。
+PDFドキュメントをオンライン講義形式の音声コンテンツに変換するツールです。
 
-## 📖 概要
+## 概要
 
-このツールは以下の処理を自動化します：
+PDF Podcast Generatorは、PDFファイルから章を抽出し、AIを使用して講義形式のスクリプトを生成し、自然な音声に変換します。生成された音声は、講師が視聴者に向けて説明するオンライン講義のような形式になります。
 
-1. **PDF解析**: PDFファイルから章ごとにテキストを抽出
-2. **対話スクリプト生成**: Gemini AIを使って各章を2人の対話形式に変換
-3. **音声生成**: Gemini TTSのマルチスピーカー機能で自然な対話音声を作成
-4. **音声編集**: 章別音声の連結、BGM追加、チャプター情報の埋め込み
+## 特徴
 
-## ✨ 主な機能
+- 📚 PDFから自動的に章を抽出
+- 🎓 講義形式のスクリプト生成（導入・本論・まとめの構造）
+- 🎙️ 高品質な音声合成（Gemini TTS使用）
+- 📊 進捗管理とマニフェスト機能
+- 🎵 BGM付き音声生成のサポート
+- 📝 チャプター情報付きMP3ファイル生成
 
-- 🤖 **AIベースの章検出**: Gemini AIが文書構造を理解して章を自動分割
-- 🎭 **マルチスピーカー対話**: ホストとゲストによる自然な掛け合い
-- 🎵 **高品質音声生成**: Gemini 2.5 Pro TTS Preview による24言語対応
-- 📑 **チャプター機能**: 再生アプリでスキップ可能なチャプター情報を埋め込み
-- ⚡ **並列処理**: 複数章を同時処理して高速化
-- 🔄 **再実行制御**: 既存ファイルをスキップして効率的な部分実行
-- 📊 **豊富なログ**: プログレスバーと詳細ログで進行状況を把握
+## 必要要件
 
-## 🛠 インストール
+- Python 3.8以上
+- Google API Key（Gemini API用）
+- ffmpeg（音声処理用）
 
-### 前提条件
-
-- Python 3.10以上
-- FFmpeg（音声処理用）
-- Google Gemini API キー
-
-### Python環境の準備
+## インストール
 
 ```bash
-# リポジトリをクローン
-git clone https://https://github.com/yheihei/pdf-to-podcast
-cd pdf-to-podcast
+# リポジトリのクローン
+git clone https://github.com/yourusername/pdf-podcast.git
+cd pdf-podcast
 
-# 依存関係をインストール
+# 依存関係のインストール
 pip install -r requirements.txt
+
+# 環境変数の設定
+# .env.exampleをコピーして.envファイルを作成
+cp .env.example .env
+
+# .envファイルを編集してAPIキーを設定
+# お好みのエディタで.envを開き、以下の値を設定してください：
+#   GOOGLE_API_KEY=your_actual_api_key_here
+# 
+# 必要に応じて、他の設定も変更できます：
+#   GEMINI_MODEL_PDF_PARSER: PDF解析用モデル
+#   GEMINI_MODEL_SCRIPT_BUILDER: スクリプト生成用モデル  
+#   GEMINI_MODEL_TTS: 音声合成用モデル
 ```
 
-### FFmpegのインストール
+## 使い方
 
-**macOS:**
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update
-sudo apt install ffmpeg
-```
-
-**Windows:**
-[FFmpeg公式サイト](https://ffmpeg.org/download.html)からダウンロード
-
-### API キーの設定
-
-Google AI Studio で Gemini API キーを取得し、環境変数に設定：
+### 基本的な使い方
 
 ```bash
-# .envファイルを作成
-echo "GOOGLE_API_KEY=your_api_key_here" > .env
-
-# または環境変数で設定
-export GOOGLE_API_KEY="your_api_key_here"
+python -m pdf_podcast --input document.pdf --output-dir ./output
 ```
 
-## 🚀 使い方
+### 詳細なオプション
 
-### 基本的な使用方法
-
-```bash
-# 最小限の実行
-python -m pdf_podcast --input book.pdf --output-dir ./output
-
-# 詳細オプション付きの実行
-python -m pdf_podcast \
-    --input book.pdf \
-    --output-dir ./output \
-    --model gemini-2.5-pro-preview-tts \
-    --voice-host Kore \
-    --voice-guest Puck \
-    --bitrate 320k \
-    --max-concurrency 4 \
-    --skip-existing \
-    --verbose
-```
-
-### コマンドオプション
-
-| オプション | 説明 | デフォルト値 |
-|-----------|------|-------------|
-| `--input` | 入力PDFファイル（必須） | - |
-| `--output-dir` | 出力ディレクトリ（必須） | - |
-| `--model` | Gemini TTSモデル | `gemini-2.5-pro-preview-tts` |
-| `--voice-host` | ホストの音声 | `Kore` |
-| `--voice-guest` | ゲストの音声 | `Puck` |
-| `--bitrate` | 音声ビットレート | `192k` |
-| `--bgm` | BGMファイル（MP3） | なし |
-| `--max-concurrency` | 並列処理数 | `3` |
-| `--skip-existing` | 既存ファイルをスキップ | `False` |
-| `--verbose` | 詳細ログ表示 | `False` |
-
-### 使用例
-
-**基本実行:**
-```bash
-python -m pdf_podcast --input "技術書.pdf" --output-dir ./output
-```
-
-**高品質+BGM付き:**
 ```bash
 python -m pdf_podcast \
-    --input "技術書.pdf" \
-    --output-dir ./output \
-    --bitrate 320k \
-    --bgm ./music/intro.mp3 \
-    --verbose
+  --input document.pdf \
+  --output-dir ./output \
+  --voice Kore \
+  --bgm background_music.mp3 \
+  --skip-existing
 ```
 
-**高速処理（並列度アップ）:**
-```bash
-python -m pdf_podcast \
-    --input "技術書.pdf" \
-    --output-dir ./output \
-    --max-concurrency 8 \
-    --skip-existing
-```
+### コマンドラインオプション
 
-## 📁 出力ファイル構成
+| オプション | 説明 | デフォルト |
+|------------|------|------------|
+| `--input` | 入力PDFファイルのパス | 必須 |
+| `--output-dir` | 出力ディレクトリ | 必須 |
+| `--voice` | 講師の音声 | Kore |
+| `--bgm` | BGM音楽ファイルのパス | なし |
+| `--bitrate` | 音声のビットレート | 320k |
+| `--max-concurrency` | 最大同時実行数 | 1 |
+| `--skip-existing` | 既存ファイルをスキップ | False |
+| `--model-pdf` | PDF解析用のGeminiモデル | gemini-2.5-flash-preview-05-20 |
+| `--model-script` | スクリプト生成用のGeminiモデル | gemini-2.5-pro-preview-06-05 |
+| `--model-tts` | 音声合成用のGeminiモデル | gemini-2.5-pro-preview-tts |
+| `--verbose` | 詳細なログ出力 | False |
+
+## 出力ファイル
+
+実行後、以下のファイルが生成されます：
 
 ```
 output/
-├── manifest.json              # 処理状況とメタデータ
-├── episode.mp3               # 最終ポッドキャスト（チャプター付き）
-├── scripts/                  # 生成されたスクリプト
-│   ├── 01_序章.txt
-│   ├── 02_第1章_概要.txt
-│   └── 03_第2章_実装.txt
-├── audio/                    # 章別音声ファイル
-│   ├── 01_序章.mp3
-│   ├── 02_第1章_概要.mp3
-│   └── 03_第2章_実装.mp3
-└── logs/                     # 詳細ログ
-    └── tool_20250608_120000.log
+├── episode.mp3          # 最終的なポッドキャストファイル
+├── manifest.json        # 処理の進捗情報
+├── scripts/            # 生成された講義スクリプト
+│   └── timestamp/
+│       ├── chapter1.txt
+│       └── chapter2.txt
+├── audio/              # 章ごとの音声ファイル
+│   └── timestamp/
+│       ├── 01_chapter1.mp3
+│       └── 02_chapter2.mp3
+└── logs/               # ログファイル
 ```
 
-### メインファイル
+## 講義形式について
 
-- **`episode.mp3`**: 全章を連結した最終ポッドキャスト
-  - ID3v2チャプター情報付き
-  - 再生アプリでチャプタースキップ可能
-  - BGM付き（指定時）
+生成されるコンテンツは以下の特徴を持ちます：
 
-- **`manifest.json`**: 処理進行状況
-  ```json
-  {
-    "pdf_path": "book.pdf",
-    "total_chapters": 5,
-    "completed_chapters": 3,
-    "chapters": [
-      {
-        "title": "序章",
-        "status": "completed",
-        "script_file": "scripts/01_序章.txt",
-        "audio_file": "audio/01_序章.mp3"
-      }
-    ]
-  }
-  ```
+- **構造化された内容**: 導入、本論、まとめの明確な構造
+- **視聴者への語りかけ**: 「みなさん」「〜ですね」などの親しみやすい表現
+- **適切な長さ**: 各章5分程度（1500〜2000文字）で聴きやすい
+- **専門用語の説明**: 難しい用語には適切な説明を追加
 
-## 🎵 対応音声設定
+## 制限事項
 
-### 利用可能な音声
+- Gemini APIの無料枠では、1分間に2リクエストまでの制限があります
+- 大きなPDFファイルの処理には時間がかかる場合があります
+- 生成される音声ファイルは実際にはWAV形式ですが、互換性のため.mp3拡張子で保存されます
 
-Gemini TTSが対応する音声名（一部）:
-- `Kore`, `Puck`, `Sage`, `Vale` (英語)
-- `Echo`, `Felix`, `Nova`, `Zen` (多言語対応)
+## トラブルシューティング
 
-### 音声の選び方
+### タイムアウトエラー
+長いコンテンツの処理でタイムアウトが発生する場合は、章の内容を短くするか、処理を分割してください。
 
-```bash
-# 異なる性別の組み合わせ例
---voice-host Sage --voice-guest Echo  # 男性 + 女性
---voice-host Nova --voice-guest Felix # 女性 + 男性
-```
+### レート制限エラー
+APIのレート制限に達した場合は、少し時間を置いてから再実行してください。
 
-## 🔧 トラブルシューティング
+### 音声が生成されない
+- Google API Keyが正しく設定されているか確認してください
+- ネットワーク接続を確認してください
+- ログファイルでエラーの詳細を確認してください
 
-### よくある問題
-
-**1. API キーエラー**
-```
-Error: API key not found
-```
-→ `GOOGLE_API_KEY` 環境変数が設定されているか確認
-
-**2. FFmpegエラー**
-```
-FFmpeg not found
-```
-→ FFmpegがインストールされ、PATHに追加されているか確認
-
-**3. メモリ不足**
-```
-MemoryError during audio processing
-```
-→ `--max-concurrency` を下げて実行
-
-**4. API制限エラー**
-```
-Rate limit exceeded
-```
-→ しばらく待ってから `--skip-existing` で再実行
-
-### デバッグ方法
-
-**詳細ログの確認:**
-```bash
-python -m pdf_podcast --input book.pdf --output-dir ./output --verbose
-```
-
-**ログファイルの確認:**
-```bash
-tail -f ./output/logs/tool_*.log
-```
-
-**マニフェストの確認:**
-```bash
-cat ./output/manifest.json | python -m json.tool
-```
-
-## 🧪 開発・テスト
-
-### テストの実行
-
-```bash
-# 全テストを実行
-pytest
-
-# 特定モジュールのテスト
-pytest tests/test_pdf_parser.py -v
-
-# カバレッジ付きテスト
-pytest --cov=pdf_podcast tests/
-```
-
-### 開発環境のセットアップ
-
-```bash
-# 開発用依存関係のインストール
-pip install -e .
-pip install pytest pytest-cov black flake8
-
-# コードフォーマット
-black pdf_podcast/
-flake8 pdf_podcast/
-```
-
-## 📋 制限事項
-
-- **PDF形式**: テキスト抽出可能なPDFのみ対応（画像PDFは非対応）
-- **言語**: 日本語と英語で最適化（他言語は実験的）
-- **ファイルサイズ**: 大きなPDF（500ページ超）は処理時間が長くなる可能性
-- **API制限**: Gemini APIの利用制限に依存
-
-## 🔗 関連リンク
-
-- [Gemini API Documentation](https://ai.google.dev/docs)
-- [Google AI Studio](https://aistudio.google.com/)
-- [FFmpeg公式サイト](https://ffmpeg.org/)
-
-## 📄 ライセンス
+## ライセンス
 
 MIT License
+
+## 貢献
+
+プルリクエストを歓迎します。大きな変更を行う場合は、まずIssueを作成して変更内容について議論してください。

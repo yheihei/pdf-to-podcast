@@ -16,8 +16,6 @@ from dotenv import load_dotenv
 from .pdf_parser import PDFParser, Chapter
 from .script_builder import ScriptBuilder
 from .tts_client import TTSClient
-from .audio_mixer import AudioMixer
-from .id3_tags import ChapterTagger
 from .manifest import ManifestManager, ChapterInfo, ChapterStatus
 from .logging_system import setup_logger
 from .model_config import ModelConfig
@@ -51,8 +49,6 @@ class PodcastGenerator:
         self.pdf_parser = None
         self.script_builder = None
         self.tts_client = None
-        self.audio_mixer = AudioMixer(bitrate=args.bitrate)
-        self.chapter_tagger = ChapterTagger()
         self.manifest_manager = ManifestManager(self.manifest_path)
         
         # Setup signal handler for graceful shutdown
@@ -113,12 +109,8 @@ class PodcastGenerator:
             self.podcast_logger.print_info("Step 3: Generating audio files...")
             audio_paths = await self._generate_audio(scripts)
             
-            # Step 5: Create episode
-            self.podcast_logger.print_info("Step 4: Creating final episode...")
-            episode_path = await self._create_episode(audio_paths)
-            
             # Print final summary
-            self._print_completion_summary(episode_path)
+            self._print_completion_summary(None)
             
             return 0
             
@@ -134,8 +126,7 @@ class PodcastGenerator:
         config_data = {
             "Input PDF": self.args.input,
             "Output Directory": self.args.output_dir,
-            "Host Voice": self.args.voice_host,
-            "Guest Voice": self.args.voice_guest,
+            "Voice": self.args.voice,
             "Max Concurrency": self.args.max_concurrency,
             "Skip Existing": self.args.skip_existing,
             "Bitrate": self.args.bitrate,
@@ -205,8 +196,7 @@ class PodcastGenerator:
                     output_dir=str(self.output_dir),
                     chapters=chapter_infos,
                     model=f"PDF:{self.model_config.pdf_model}, Script:{self.model_config.script_model}, TTS:{self.model_config.tts_model}",
-                    voice_host=self.args.voice_host,
-                    voice_guest=self.args.voice_guest,
+                    voice=self.args.voice,
                     max_concurrency=self.args.max_concurrency,
                     skip_existing=self.args.skip_existing,
                     bgm_path=self.args.bgm
@@ -288,10 +278,10 @@ class PodcastGenerator:
             # Initialize TTS client with configured model
             self.tts_client = TTSClient(self.api_key, self.model_config.tts_model)
             
-            # Convert scripts to dialogue lines format
-            dialogue_scripts = {}
+            # Convert scripts to lecture content format
+            lecture_scripts = {}
             for title, script in scripts.items():
-                dialogue_scripts[title] = script.lines
+                lecture_scripts[title] = script.content
             
             # Setup output directory for audio
             audio_dir = self.output_dir / "audio" / self.timestamp
@@ -301,23 +291,19 @@ class PodcastGenerator:
             task_id = self.podcast_logger.add_task(f"Generating audio for {len(scripts)} chapters...", total=len(scripts))
             
             audio_paths = await self.tts_client.generate_chapter_audios_async(
-                scripts=dialogue_scripts,
+                scripts=lecture_scripts,
                 output_dir=audio_dir,
-                voice_host=self.args.voice_host,
-                voice_guest=self.args.voice_guest,
+                voice=self.args.voice,
                 max_concurrency=self.args.max_concurrency,
                 skip_existing=self.args.skip_existing
             )
             
             # Update manifest with audio information
             for title, audio_path in audio_paths.items():
-                duration = self.audio_mixer.get_audio_duration(audio_path)
-                
                 self.manifest_manager.update_chapter(
                     chapter_title=title,
                     status=ChapterStatus.AUDIO_GENERATED,
-                    audio_path=str(audio_path),
-                    audio_duration=duration
+                    audio_path=str(audio_path)
                 )
                 self.podcast_logger.update_task(task_id)
             
@@ -394,30 +380,26 @@ class PodcastGenerator:
             self.podcast_logger.print_error(f"Failed to create episode: {str(e)}", e)
             return None
     
-    def _print_completion_summary(self, episode_path: Optional[Path]) -> None:
+    def _print_completion_summary(self, _: Optional[Path]) -> None:
         """Print completion summary.
         
         Args:
-            episode_path: Path to final episode file
+            _: Unused argument (kept for compatibility)
         """
         self.podcast_logger.print_header("Podcast Generation Complete!")
         
-        if episode_path and episode_path.exists():
-            self.podcast_logger.print_success(f"Episode created successfully!")
-            self.podcast_logger.print_file_info(episode_path, "Episode")
-            
-            # Print output files
-            self.podcast_logger.print_info("Output files:")
-            self.podcast_logger.print_file_info(self.output_dir / "scripts", "Scripts directory")
-            self.podcast_logger.print_file_info(self.output_dir / "audio", "Audio directory")
-            self.podcast_logger.print_file_info(self.manifest_path, "Manifest file")
-            self.podcast_logger.print_file_info(self.log_dir, "Logs directory")
-            
-            # Final progress summary
-            summary = self.manifest_manager.get_progress_summary()
-            self.podcast_logger.print_progress_summary(summary)
-        else:
-            self.podcast_logger.print_error("Episode creation failed")
+        self.podcast_logger.print_success(f"Chapter audio files generated successfully!")
+        
+        # Print output files
+        self.podcast_logger.print_info("Output files:")
+        self.podcast_logger.print_file_info(self.output_dir / "scripts", "Scripts directory")
+        self.podcast_logger.print_file_info(self.output_dir / "audio", "Audio directory")
+        self.podcast_logger.print_file_info(self.manifest_path, "Manifest file")
+        self.podcast_logger.print_file_info(self.log_dir, "Logs directory")
+        
+        # Final progress summary
+        summary = self.manifest_manager.get_progress_summary()
+        self.podcast_logger.print_progress_summary(summary)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -433,7 +415,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   pdf_podcast --input book.pdf --output-dir ./podcast
   pdf_podcast --input book.pdf --output-dir ./podcast --max-concurrency 2 --skip-existing
-  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice-host Kore
+  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice Kore
         """
     )
     
@@ -472,17 +454,10 @@ Examples:
     )
     
     parser.add_argument(
-        "--voice-host",
+        "--voice",
         type=str,
         default="Kore",
-        help="Voice name for Host speaker (default: Kore)"
-    )
-    
-    parser.add_argument(
-        "--voice-guest",
-        type=str,
-        default="Puck",
-        help="Voice name for Guest speaker (default: Puck)"
+        help="Voice name for the lecturer (default: Kore)"
     )
     
     parser.add_argument(
