@@ -5,6 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 応答のルール
 - 常に日本語で応答してください。コード部分はそのままにしてください。
 
+## 単体テスト方法
+
+```
+pytest
+```
+
+## 出力テスト方法
+
+```
+python -m pdf_podcast --input test/test.pdf --output-dir ./output
+```
+
+note: 時間がかかるため、ユーザーに依頼しても良い
+
 ## タスクの遂行方法
 
 適用条件: 実装を依頼された時。単なる質問事項の場合適用されない。
