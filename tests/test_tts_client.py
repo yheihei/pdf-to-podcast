@@ -118,14 +118,14 @@ class TestTTSClient:
         
         # Check content
         content_arg = call_args[0][0][0]  # First element of the list passed to generate_content
-        assert '<speaker id="Host">テスト</speaker>' in content_arg
-        assert '<speaker id="Guest">音声生成</speaker>' in content_arg
+        assert '[Host speaking in Kore voice]: テスト' in content_arg
+        assert '[Guest speaking in Puck voice]: 音声生成' in content_arg
         
         # Check generation config
         gen_config = call_args[1]['generation_config']
         assert gen_config['response_modalities'] == ["AUDIO"]
         assert gen_config['response_mime_type'] == "audio/mp3"
-        assert 'multiSpeakerVoiceConfig' in gen_config
+        assert 'multiSpeakerVoiceConfig' not in gen_config
     
     @patch('builtins.open', new_callable=mock_open)
     @patch('pathlib.Path.mkdir')

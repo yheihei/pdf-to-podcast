@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -24,13 +25,14 @@ class Chapter:
 class PDFParser:
     """PDFファイルから章を検出し、テキストを抽出するクラス"""
     
-    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.5-flash-preview-05-20"):
+    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.5-flash-preview-05-20", api_key: Optional[str] = None):
         """
         PDFパーサーを初期化
         
         Args:
             pdf_path: 解析するPDFファイルのパス
             gemini_model: 使用するGeminiモデル
+            api_key: Google API キー（省略時は環境変数から取得）
         """
         self.pdf_path = Path(pdf_path)
         if not self.pdf_path.exists():
@@ -39,6 +41,14 @@ class PDFParser:
         self.gemini_model = gemini_model
         self.pdf_reader = PdfReader(str(self.pdf_path))
         self.total_pages = len(self.pdf_reader.pages)
+        
+        # API キーの設定
+        if api_key is None:
+            api_key = os.getenv("GOOGLE_API_KEY")
+        if api_key:
+            genai.configure(api_key=api_key)
+        else:
+            logger.warning("Google API key not found. Please set GOOGLE_API_KEY environment variable.")
         
     def extract_chapters(self) -> List[Chapter]:
         """

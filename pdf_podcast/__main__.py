@@ -146,7 +146,7 @@ class PodcastGenerator:
         """
         try:
             # Initialize PDF parser
-            self.pdf_parser = PDFParser(self.args.input, self.args.model)
+            self.pdf_parser = PDFParser(self.args.input, self.args.model, self.api_key)
             
             # Extract chapters
             progress = self.podcast_logger.start_progress()
@@ -276,8 +276,10 @@ class PodcastGenerator:
             Dictionary of audio file paths
         """
         try:
-            # Initialize TTS client
-            self.tts_client = TTSClient(self.api_key, self.args.model)
+            # Initialize TTS client with audio-capable model
+            # Use gemini-2.5-pro-preview-tts for TTS functionality
+            tts_model = "gemini-2.5-pro-preview-tts"
+            self.tts_client = TTSClient(self.api_key, tts_model)
             
             # Convert scripts to dialogue lines format
             dialogue_scripts = {}
@@ -447,8 +449,8 @@ Examples:
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-2.5-pro-preview-tts",
-        help="Gemini model to use (default: gemini-2.5-pro-preview-tts)"
+        default="gemini-2.0-flash-exp",
+        help="Gemini model to use (default: gemini-2.0-flash-exp)"
     )
     
     parser.add_argument(

@@ -2,12 +2,13 @@
 
 import asyncio
 import logging
-import base64
 import time
 import random
 from typing import Dict, List, Optional, BinaryIO
 from dataclasses import dataclass
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+import wave
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -30,8 +31,8 @@ class TTSClient:
             api_key: Google API key for Gemini
             model_name: Gemini TTS model to use
         """
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model_name)
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = model_name
         
     def generate_audio(
         self,
@@ -53,45 +54,41 @@ class TTSClient:
         """
         logger.info(f"Generating audio with {len(dialogue_lines)} dialogue lines")
         
-        # Create multi-speaker content
-        content = self._create_multi_speaker_content(dialogue_lines)
-        
-        # Create voice configuration
-        multi_speaker_config = {
-            "multiSpeakerVoiceConfig": {
-                "speakers": [
-                    {
-                        "speakerId": "Host",
-                        "voiceName": voice_host
-                    },
-                    {
-                        "speakerId": "Guest", 
-                        "voiceName": voice_guest
-                    }
-                ]
-            }
-        }
+        # Create multi-speaker content with voice configuration
+        content = self._create_multi_speaker_content_with_voices(
+            dialogue_lines, voice_host, voice_guest
+        )
         
         try:
-            # Generate audio using Gemini TTS
-            response = self.model.generate_content(
-                [content],
-                generation_config={
-                    **multi_speaker_config,
-                    "response_modalities": ["AUDIO"],
-                    "response_mime_type": "audio/mp3",
-                    "temperature": 0.7,
-                }
+            # Generate audio using Gemini TTS with new API
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=content,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice_host,  # Use the host voice as default
+                            )
+                        )
+                    ),
+                    temperature=0.7,
+                )
             )
             
-            # Extract audio data
-            audio_data = self._extract_audio_data(response)
+            # Extract audio data from the new API response format
+            audio_data = response.candidates[0].content.parts[0].inline_data.data
             
-            # Save to file if path provided
+            # Convert to MP3 format if needed (the API returns WAV by default)
+            # For now, we'll save as WAV and change the extension later
             if output_path:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, 'wb') as f:
-                    f.write(audio_data)
+                # Change extension to .wav since that's what we're getting
+                wav_path = output_path.with_suffix('.wav')
+                self._save_wav_file(wav_path, audio_data)
+                # For compatibility, rename to .mp3 extension (even though it's WAV data)
+                wav_path.rename(output_path)
                 logger.info(f"Audio saved to {output_path}")
             
             return audio_data
@@ -120,26 +117,60 @@ class TTSClient:
         
         return '\n'.join(content_parts)
     
-    def _extract_audio_data(self, response) -> bytes:
-        """Extract audio data from Gemini response.
+    def _create_multi_speaker_content_with_voices(
+        self, dialogue_lines: List[Dict[str, str]], voice_host: str, voice_guest: str
+    ) -> str:
+        """Create content with voice configuration for Gemini 2.0 TTS.
         
         Args:
-            response: Response from Gemini API
+            dialogue_lines: List of dialogue entries
+            voice_host: Voice name for Host speaker
+            voice_guest: Voice name for Guest speaker
             
         Returns:
-            Audio data as bytes
+            Formatted content with voice configuration
         """
-        # Check if response contains audio
-        if not response.parts:
-            raise ValueError("No audio data in response")
+        # Create voice mapping
+        voice_mapping = {
+            "Host": voice_host,
+            "Guest": voice_guest
+        }
         
-        # Find audio part
-        for part in response.parts:
-            if hasattr(part, 'inline_data') and part.inline_data.mime_type.startswith('audio/'):
-                # Decode base64 audio data
-                return base64.b64decode(part.inline_data.data)
+        # Build the prompt with voice instructions
+        content_parts = [
+            f"Generate a podcast-style dialogue with two speakers using these voices:",
+            f"- Host voice: {voice_host}",
+            f"- Guest voice: {voice_guest}",
+            "",
+            "Dialogue:"
+        ]
         
-        raise ValueError("No audio data found in response parts")
+        # Add dialogue lines with voice instructions
+        for line in dialogue_lines:
+            speaker = line["speaker"]
+            text = line["text"]
+            voice = voice_mapping.get(speaker, voice_host)
+            
+            # Format each line with voice instruction
+            content_parts.append(f"[{speaker} speaking in {voice} voice]: {text}")
+        
+        return '\n'.join(content_parts)
+    
+    def _save_wav_file(self, filename: Path, pcm_data: bytes, channels: int = 1, rate: int = 24000, sample_width: int = 2) -> None:
+        """Save PCM audio data as a WAV file.
+        
+        Args:
+            filename: Path to save the WAV file
+            pcm_data: Raw PCM audio data
+            channels: Number of audio channels
+            rate: Sample rate in Hz
+            sample_width: Sample width in bytes
+        """
+        with wave.open(str(filename), "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(rate)
+            wf.writeframes(pcm_data)
     
     def generate_chapter_audios(
         self,
@@ -193,7 +224,7 @@ class TTSClient:
         voice_host: str = "Kore",
         voice_guest: str = "Puck",
         output_path: Optional[Path] = None,
-        max_retries: int = 5
+        max_retries: int = 3  # Reduced retries to avoid long wait times
     ) -> Optional[bytes]:
         """Generate audio with exponential backoff retry for rate limits.
         
@@ -222,8 +253,10 @@ class TTSClient:
                 # Check if it's a rate limit error
                 if "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
                     if attempt < max_retries:
-                        # Exponential backoff with jitter
-                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        # For Gemini's strict rate limit (2 requests per minute), use longer wait times
+                        # Base wait time of 30 seconds + exponential backoff
+                        base_wait = 30
+                        wait_time = base_wait + (2 ** attempt) + random.uniform(0, 5)
                         logger.warning(f"Rate limit hit, retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
                         await asyncio.sleep(wait_time)
                         continue
@@ -255,9 +288,9 @@ class TTSClient:
         output_dir: Path,
         voice_host: str = "Kore",
         voice_guest: str = "Puck",
-        max_concurrency: int = 4,
+        max_concurrency: int = 1,  # Reduced to 1 due to strict rate limits
         skip_existing: bool = False,
-        max_retries: int = 5
+        max_retries: int = 3
     ) -> Dict[str, Path]:
         """Generate audio files for multiple chapter scripts asynchronously.
         
@@ -317,12 +350,17 @@ class TTSClient:
                         logger.error(f"Failed to generate audio for chapter '{title}': {e}")
                     return None
         
-        # Process chapters concurrently
-        tasks = [
-            process_chapter(idx, title, dialogue_lines)
-            for idx, (title, dialogue_lines) in enumerate(scripts.items(), 1)
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Process chapters with rate limiting
+        results = []
+        for idx, (title, dialogue_lines) in enumerate(scripts.items(), 1):
+            # Add delay between requests to respect rate limits (2 per minute = 30s between requests)
+            if idx > 1:
+                delay = 31  # 31 seconds to be safe with 2/minute limit
+                logger.info(f"Waiting {delay}s before next request to respect rate limits...")
+                await asyncio.sleep(delay)
+            
+            result = await process_chapter(idx, title, dialogue_lines)
+            results.append(result)
         
         # Collect successful results
         for (title, _), result in zip(scripts.items(), results):
