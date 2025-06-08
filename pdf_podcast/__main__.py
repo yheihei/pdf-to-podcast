@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from .pdf_parser import PDFParser, Chapter, Section
 from .script_builder import ScriptBuilder, SectionScript
 from .tts_client import TTSClient
+from .audio_mixer import AudioMixer
 from .manifest import ManifestManager, ChapterInfo, ChapterStatus, SectionInfo, SectionStatus
 from .logging_system import setup_logger
 from .model_config import ModelConfig
@@ -50,10 +51,49 @@ class PodcastGenerator:
         self.pdf_parser = None
         self.script_builder = None
         self.tts_client = None
+        self.audio_mixer = None
         self.manifest_manager = ManifestManager(self.manifest_path)
+        
+        # Apply quality settings
+        self._apply_quality_settings()
+        
+        # Initialize audio mixer with quality settings
+        self.audio_mixer = AudioMixer(
+            bitrate=self.args.bitrate,
+            channels=self.quality_settings["channels"]
+        )
         
         # Setup signal handler for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
+    
+    def _apply_quality_settings(self) -> None:
+        """Apply quality preset settings to override individual parameters."""
+        quality_presets = {
+            "high": {
+                "bitrate": "320k",
+                "sample_rate": 24000,
+                "channels": 2
+            },
+            "standard": {
+                "bitrate": "128k", 
+                "sample_rate": 22050,
+                "channels": 1
+            },
+            "compact": {
+                "bitrate": "96k",
+                "sample_rate": 16000,
+                "channels": 1
+            }
+        }
+        
+        preset = quality_presets.get(self.args.quality, quality_presets["standard"])
+        
+        # Override bitrate only if not explicitly set by user
+        if self.args.bitrate == "128k":  # default value
+            self.args.bitrate = preset["bitrate"]
+        
+        # Store quality settings for later use
+        self.quality_settings = preset
     
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitize filename to create safe directory name.
@@ -185,9 +225,9 @@ class PodcastGenerator:
             "Input PDF": self.args.input,
             "Output Directory": self.args.output_dir,
             "Voice": self.args.voice,
+            "Quality": f"{self.args.quality} ({self.args.bitrate}, {self.quality_settings['sample_rate']}Hz, {'Mono' if self.quality_settings['channels'] == 1 else 'Stereo'})",
             "Max Concurrency": self.args.max_concurrency,
             "Skip Existing": self.args.skip_existing,
-            "Bitrate": self.args.bitrate,
             "BGM": self.args.bgm if self.args.bgm else "None"
         }
         
@@ -407,8 +447,14 @@ class PodcastGenerator:
             Dictionary of audio file paths
         """
         try:
-            # Initialize TTS client with configured model
-            self.tts_client = TTSClient(self.api_key, self.model_config.tts_model)
+            # Initialize TTS client with configured model and quality settings
+            self.tts_client = TTSClient(
+                api_key=self.api_key, 
+                model_name=self.model_config.tts_model,
+                sample_rate=self.quality_settings["sample_rate"],
+                channels=self.quality_settings["channels"],
+                bitrate=self.args.bitrate
+            )
             
             # Convert scripts to lecture content format
             lecture_scripts = {}
@@ -600,8 +646,14 @@ class PodcastGenerator:
             Dictionary of audio file paths
         """
         try:
-            # Initialize TTS client with configured model
-            self.tts_client = TTSClient(self.api_key, self.model_config.tts_model)
+            # Initialize TTS client with configured model and quality settings
+            self.tts_client = TTSClient(
+                api_key=self.api_key, 
+                model_name=self.model_config.tts_model,
+                sample_rate=self.quality_settings["sample_rate"],
+                channels=self.quality_settings["channels"],
+                bitrate=self.args.bitrate
+            )
             
             # Setup output directory for audio
             audio_dir = self.output_dir / "audio" / self.pdf_dirname
@@ -721,8 +773,16 @@ Examples:
     parser.add_argument(
         "--bitrate",
         type=str,
-        default="320k",
-        help="Audio bitrate (default: 320k)"
+        default="128k",
+        help="Audio bitrate (default: 128k)"
+    )
+    
+    parser.add_argument(
+        "--quality",
+        type=str,
+        choices=["high", "standard", "compact"],
+        default="standard",
+        help="Audio quality preset: high (320kbps/24kHz/stereo), standard (128kbps/22kHz/mono), compact (96kbps/16kHz/mono)"
     )
     
     parser.add_argument(

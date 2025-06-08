@@ -52,7 +52,14 @@ class TestAudioMixer:
         
         # Test default bitrate
         default_mixer = AudioMixer()
-        assert default_mixer.bitrate == "320k"
+        assert default_mixer.bitrate == "128k"  # Updated default
+        
+        # Test channels parameter
+        mono_mixer = AudioMixer(channels=1)
+        assert mono_mixer.channels == 1
+        
+        stereo_mixer = AudioMixer(channels=2)
+        assert stereo_mixer.channels == 2
     
     @patch('pdf_podcast.audio_mixer.AudioSegment')
     @patch('pdf_podcast.audio_mixer.normalize')

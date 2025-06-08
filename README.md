@@ -14,6 +14,7 @@ PDF Podcast Generatorは、PDFファイルから章を抽出し、AIを使用し
 - 📊 進捗管理とマニフェスト機能
 - 🎵 BGM付き音声生成のサポート
 - 📝 チャプター情報付きMP3ファイル生成
+- 🗜️ **NEW** 音声ファイルサイズ最適化（最大70%削減）
 
 ## 必要要件
 
@@ -60,8 +61,24 @@ python -m pdf_podcast \
   --input document.pdf \
   --output-dir ./output \
   --voice Kore \
+  --quality standard \
   --bgm background_music.mp3 \
   --skip-existing
+```
+
+### 音声品質設定
+
+ファイルサイズと音質のバランスを調整できます：
+
+```bash
+# 標準品質（推奨、70%サイズ削減）
+python -m pdf_podcast --input document.pdf --output-dir ./output --quality standard
+
+# 高品質（従来品質、大きなファイルサイズ）
+python -m pdf_podcast --input document.pdf --output-dir ./output --quality high
+
+# コンパクト（最大圧縮、80%サイズ削減）
+python -m pdf_podcast --input document.pdf --output-dir ./output --quality compact
 ```
 
 ### コマンドラインオプション
@@ -71,14 +88,23 @@ python -m pdf_podcast \
 | `--input` | 入力PDFファイルのパス | 必須 |
 | `--output-dir` | 出力ディレクトリ | 必須 |
 | `--voice` | 講師の音声 | Kore |
+| `--quality` | 音声品質プリセット（high/standard/compact） | standard |
+| `--bitrate` | 音声のビットレート（qualityより優先） | 128k |
 | `--bgm` | BGM音楽ファイルのパス | なし |
-| `--bitrate` | 音声のビットレート | 320k |
 | `--max-concurrency` | 最大同時実行数 | 1 |
 | `--skip-existing` | 既存ファイルをスキップ | False |
 | `--model-pdf` | PDF解析用のGeminiモデル | gemini-2.5-flash-preview-05-20 |
 | `--model-script` | スクリプト生成用のGeminiモデル | gemini-2.5-pro-preview-06-05 |
 | `--model-tts` | 音声合成用のGeminiモデル | gemini-2.5-pro-preview-tts |
 | `--verbose` | 詳細なログ出力 | False |
+
+#### 音声品質プリセット詳細
+
+| 品質設定 | ビットレート | サンプルレート | チャンネル | ファイルサイズ | 用途 |
+|----------|-------------|---------------|-----------|------------|------|
+| `high` | 320kbps | 24kHz | ステレオ | 大（従来サイズ） | 最高音質が必要な場合 |
+| `standard` | 128kbps | 22.05kHz | モノラル | 小（70%削減） | **推奨**：音声コンテンツに最適 |
+| `compact` | 96kbps | 16kHz | モノラル | 最小（80%削減） | ストレージ節約が最優先 |
 
 ## 出力ファイル
 
@@ -115,6 +141,18 @@ output/
 - Gemini APIの無料枠では、1分間に2リクエストまでの制限があります
 - 大きなPDFファイルの処理には時間がかかる場合があります
 - 生成される音声ファイルは実際にはWAV形式ですが、互換性のため.mp3拡張子で保存されます
+
+## パフォーマンス情報
+
+### ファイルサイズの目安
+
+| 音声長 | high品質 | standard品質 | compact品質 |
+|--------|----------|-------------|-------------|
+| 1分 | 約2.4MB | 約1.0MB | 約0.7MB |
+| 5分 | 約12MB | 約5MB | 約3.5MB |
+| 10分 | 約24MB | 約10MB | 約7MB |
+
+**standard品質（推奨）**は、音声コンテンツに十分な品質を保ちながら、ファイルサイズを大幅に削減します。
 
 ## トラブルシューティング
 
