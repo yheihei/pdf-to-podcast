@@ -7,6 +7,8 @@ from pathlib import Path
 import google.generativeai as genai
 from dataclasses import dataclass
 
+from .rate_limiter import GeminiRateLimiter, RateLimitConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,11 @@ class ScriptBuilder:
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model_name)
         
-    def generate_dialogue_script(self, chapter_title: str, chapter_content: str) -> DialogueScript:
+        # レートリミッターの初期化
+        rate_limit_config = RateLimitConfig(rpm_limit=15)  # Free tier
+        self.rate_limiter = GeminiRateLimiter(rate_limit_config)
+        
+    async def generate_dialogue_script(self, chapter_title: str, chapter_content: str) -> DialogueScript:
         """Generate a dialogue script from chapter content.
         
         Args:
@@ -46,7 +52,14 @@ class ScriptBuilder:
         prompt = self._create_dialogue_prompt(chapter_title, chapter_content)
         
         try:
-            response = self.model.generate_content(prompt)
+            # Use rate limiter for API call
+            response = await self.rate_limiter.call_with_backoff(
+                self.model.generate_content, prompt
+            )
+            
+            # Debug: Log the raw response
+            logger.info(f"Raw API response for '{chapter_title}': {response.text[:500]}...")
+            
             dialogue_lines = self._parse_dialogue_response(response.text)
             
             total_chars = sum(len(line["text"]) for line in dialogue_lines)
@@ -103,6 +116,9 @@ Host: [ホストの発言]
         Returns:
             List of dialogue entries
         """
+        logger.info(f"Parsing response text length: {len(response_text)}")
+        logger.info(f"First 200 chars: {response_text[:200]}")
+        
         lines = []
         current_speaker = None
         current_text = []
@@ -112,23 +128,32 @@ Host: [ホストの発言]
             if not line:
                 continue
                 
-            if line.startswith('Host:'):
+            # Handle both "Host:" and "**Host:**" formats
+            if line.startswith('Host:') or line.startswith('**Host:**'):
                 if current_speaker and current_text:
                     lines.append({
                         "speaker": current_speaker,
                         "text": ' '.join(current_text).strip()
                     })
                 current_speaker = "Host"
-                current_text = [line[5:].strip()]
+                # Extract text after "Host:" or "**Host:**"
+                if line.startswith('**Host:**'):
+                    current_text = [line[9:].strip()]  # Skip "**Host:**"
+                else:
+                    current_text = [line[5:].strip()]  # Skip "Host:"
                 
-            elif line.startswith('Guest:'):
+            elif line.startswith('Guest:') or line.startswith('**Guest:**'):
                 if current_speaker and current_text:
                     lines.append({
                         "speaker": current_speaker,
                         "text": ' '.join(current_text).strip()
                     })
                 current_speaker = "Guest"
-                current_text = [line[6:].strip()]
+                # Extract text after "Guest:" or "**Guest:**"
+                if line.startswith('**Guest:**'):
+                    current_text = [line[10:].strip()]  # Skip "**Guest:**"
+                else:
+                    current_text = [line[6:].strip()]  # Skip "Guest:"
                 
             else:
                 # Continuation of previous speaker's text
@@ -141,6 +166,10 @@ Host: [ホストの発言]
                 "speaker": current_speaker,
                 "text": ' '.join(current_text).strip()
             })
+        
+        logger.info(f"Parsed {len(lines)} dialogue lines")
+        if len(lines) == 0:
+            logger.warning("No dialogue lines were parsed from the response!")
         
         return lines
     
@@ -200,7 +229,7 @@ Host: [ホストの発言]
         self,
         chapters: Dict[str, str],
         output_dir: Optional[Path] = None,
-        max_concurrency: int = 4,
+        max_concurrency: int = 1,
         skip_existing: bool = False
     ) -> Dict[str, DialogueScript]:
         """Generate dialogue scripts for multiple chapters asynchronously.
@@ -214,7 +243,12 @@ Host: [ホストの発言]
         Returns:
             Dictionary of chapter_title -> DialogueScript
         """
-        semaphore = asyncio.Semaphore(max_concurrency)
+        # Force max_concurrency to 1 for Free tier compliance
+        actual_concurrency = 1
+        semaphore = asyncio.Semaphore(actual_concurrency)
+        
+        if max_concurrency > 1:
+            logger.warning(f"max_concurrency reduced from {max_concurrency} to 1 for Free tier rate limit compliance")
         scripts = {}
         
         async def process_chapter(title: str, content: str) -> Optional[DialogueScript]:
@@ -230,10 +264,8 @@ Host: [ホストの発言]
                             logger.info(f"Skipping existing script: {title}")
                             return None
                     
-                    # Generate script (run in thread pool since it's not async)
-                    script = await asyncio.get_event_loop().run_in_executor(
-                        None, self.generate_dialogue_script, title, content
-                    )
+                    # Generate script (now async)
+                    script = await self.generate_dialogue_script(title, content)
                     
                     # Save to file if output directory specified
                     if output_dir:

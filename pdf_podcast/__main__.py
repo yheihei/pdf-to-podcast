@@ -20,6 +20,7 @@ from .audio_mixer import AudioMixer
 from .id3_tags import ChapterTagger
 from .manifest import ManifestManager, ChapterInfo, ChapterStatus
 from .logging_system import setup_logger
+from .model_config import ModelConfig
 
 # Load environment variables
 load_dotenv()
@@ -46,6 +47,7 @@ class PodcastGenerator:
         
         # Initialize components
         self.api_key = self._get_api_key()
+        self.model_config = ModelConfig.from_args(args)
         self.pdf_parser = None
         self.script_builder = None
         self.tts_client = None
@@ -132,7 +134,6 @@ class PodcastGenerator:
         config_data = {
             "Input PDF": self.args.input,
             "Output Directory": self.args.output_dir,
-            "Model": self.args.model,
             "Host Voice": self.args.voice_host,
             "Guest Voice": self.args.voice_guest,
             "Max Concurrency": self.args.max_concurrency,
@@ -140,6 +141,10 @@ class PodcastGenerator:
             "Bitrate": self.args.bitrate,
             "BGM": self.args.bgm if self.args.bgm else "None"
         }
+        
+        # Add model configuration
+        config_data.update(self.model_config.get_config_summary())
+        
         self.podcast_logger.print_summary(config_data)
     
     async def _parse_pdf(self) -> list[Chapter]:
@@ -150,13 +155,13 @@ class PodcastGenerator:
         """
         try:
             # Initialize PDF parser
-            self.pdf_parser = PDFParser(self.args.input, self.args.model, self.api_key)
+            self.pdf_parser = PDFParser(self.args.input, self.model_config.pdf_model, self.api_key)
             
             # Extract chapters
             progress = self.podcast_logger.start_progress()
             task_id = self.podcast_logger.add_task("Extracting chapters from PDF...")
             
-            chapters = self.pdf_parser.extract_chapters()
+            chapters = await self.pdf_parser.extract_chapters()
             
             self.podcast_logger.complete_task(task_id, f"Extracted {len(chapters)} chapters")
             self.podcast_logger.stop_progress()
@@ -199,7 +204,7 @@ class PodcastGenerator:
                     pdf_path=str(self.args.input),
                     output_dir=str(self.output_dir),
                     chapters=chapter_infos,
-                    model=self.args.model,
+                    model=f"PDF:{self.model_config.pdf_model}, Script:{self.model_config.script_model}, TTS:{self.model_config.tts_model}",
                     voice_host=self.args.voice_host,
                     voice_guest=self.args.voice_guest,
                     max_concurrency=self.args.max_concurrency,
@@ -228,7 +233,7 @@ class PodcastGenerator:
         """
         try:
             # Initialize script builder
-            self.script_builder = ScriptBuilder(self.api_key, self.args.model)
+            self.script_builder = ScriptBuilder(self.api_key, self.model_config.script_model)
             
             # Prepare chapter content
             chapter_content = {ch.title: ch.text for ch in chapters}
@@ -280,10 +285,8 @@ class PodcastGenerator:
             Dictionary of audio file paths
         """
         try:
-            # Initialize TTS client with audio-capable model
-            # Use gemini-2.5-pro-preview-tts for TTS functionality
-            tts_model = "gemini-2.5-pro-preview-tts"
-            self.tts_client = TTSClient(self.api_key, tts_model)
+            # Initialize TTS client with configured model
+            self.tts_client = TTSClient(self.api_key, self.model_config.tts_model)
             
             # Convert scripts to dialogue lines format
             dialogue_scripts = {}
@@ -449,12 +452,23 @@ Examples:
         help="Output directory for generated files"
     )
     
-    # Optional arguments
+    # Model configuration arguments
     parser.add_argument(
-        "--model",
+        "--model-pdf",
         type=str,
-        default="gemini-2.0-flash-exp",
-        help="Gemini model to use (default: gemini-2.0-flash-exp)"
+        help="Gemini model for PDF parsing (default: from env or gemini-2.5-flash-preview-05-20)"
+    )
+    
+    parser.add_argument(
+        "--model-script",
+        type=str,
+        help="Gemini model for script building (default: from env or gemini-2.5-pro-preview-06-05)"
+    )
+    
+    parser.add_argument(
+        "--model-tts",
+        type=str,
+        help="Gemini model for TTS generation (default: from env or gemini-2.5-pro-preview-tts)"
     )
     
     parser.add_argument(
@@ -487,8 +501,8 @@ Examples:
     parser.add_argument(
         "--max-concurrency",
         type=int,
-        default=4,
-        help="Maximum concurrent API requests (default: 4)"
+        default=1,
+        help="Maximum concurrent API requests (default: 1 for rate limit compliance)"
     )
     
     parser.add_argument(

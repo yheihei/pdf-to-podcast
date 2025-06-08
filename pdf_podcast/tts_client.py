@@ -303,7 +303,7 @@ class TTSClient:
         output_dir: Path,
         voice_host: str = "Kore",
         voice_guest: str = "Puck",
-        max_concurrency: int = 1,  # Reduced to 1 due to strict rate limits
+        max_concurrency: int = 1,  # Fixed to 1 for Free tier rate limit compliance
         skip_existing: bool = False,
         max_retries: int = 3
     ) -> Dict[str, Path]:
@@ -321,7 +321,12 @@ class TTSClient:
         Returns:
             Dictionary of chapter_title -> audio_file_path
         """
-        semaphore = asyncio.Semaphore(max_concurrency)
+        # Force max_concurrency to 1 for Free tier compliance
+        actual_concurrency = 1
+        semaphore = asyncio.Semaphore(actual_concurrency)
+        
+        if max_concurrency > 1:
+            logger.warning(f"max_concurrency reduced from {max_concurrency} to 1 for Free tier rate limit compliance")
         audio_paths = {}
         output_dir.mkdir(parents=True, exist_ok=True)
         
