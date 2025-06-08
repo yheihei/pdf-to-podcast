@@ -6,6 +6,7 @@ import datetime
 import os
 import sys
 import signal
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 import logging
@@ -53,6 +54,54 @@ class PodcastGenerator:
         
         # Setup signal handler for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
+    
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename to create safe directory name.
+        
+        Args:
+            filename: Original filename (with or without extension)
+            
+        Returns:
+            Sanitized filename safe for directory usage
+        """
+        # Remove extension if present
+        name = Path(filename).stem
+        
+        # Replace unsafe characters with underscore
+        unsafe_chars = r'[/\\:*?"<>|]'
+        sanitized = re.sub(unsafe_chars, '_', name)
+        
+        # Replace consecutive underscores with single underscore
+        sanitized = re.sub(r'_+', '_', sanitized)
+        
+        # Strip leading/trailing whitespace and dots
+        sanitized = sanitized.strip(' .')
+        
+        # Ensure we have a valid name
+        if not sanitized:
+            sanitized = "unknown"
+            
+        return sanitized
+    
+    def _get_unique_dirname(self, base_name: str, base_dir: Path) -> str:
+        """Get unique directory name by adding suffix if needed.
+        
+        Args:
+            base_name: Base directory name
+            base_dir: Parent directory to check for existing subdirectories
+            
+        Returns:
+            Unique directory name (may have numeric suffix)
+        """
+        # Try the base name first
+        candidate = base_name
+        counter = 2
+        
+        while (base_dir / candidate).exists():
+            candidate = f"{base_name}_{counter}"
+            counter += 1
+            
+        return candidate
         
     def _get_api_key(self) -> str:
         """Get Google API key from environment or exit.
@@ -80,8 +129,17 @@ class PodcastGenerator:
             Exit code (0 for success, non-zero for error)
         """
         try:
-            # Generate timestamp for this execution
-            self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Generate directory name based on PDF filename
+            pdf_filename = Path(self.args.input).name
+            sanitized_name = self._sanitize_filename(pdf_filename)
+            
+            # Ensure unique directory names for scripts and audio
+            scripts_base_dir = self.output_dir / "scripts"
+            audio_base_dir = self.output_dir / "audio"
+            scripts_base_dir.mkdir(parents=True, exist_ok=True)
+            audio_base_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.pdf_dirname = self._get_unique_dirname(sanitized_name, scripts_base_dir)
             
             # Print header
             self.podcast_logger.print_header(
@@ -229,7 +287,7 @@ class PodcastGenerator:
             chapter_content = {ch.title: ch.text for ch in chapters}
             
             # Setup output directory for scripts
-            scripts_dir = self.output_dir / "scripts" / self.timestamp
+            scripts_dir = self.output_dir / "scripts" / self.pdf_dirname
             
             # Generate scripts asynchronously
             progress = self.podcast_logger.start_progress()
@@ -284,7 +342,7 @@ class PodcastGenerator:
                 lecture_scripts[title] = script.content
             
             # Setup output directory for audio
-            audio_dir = self.output_dir / "audio" / self.timestamp
+            audio_dir = self.output_dir / "audio" / self.pdf_dirname
             
             # Generate audio asynchronously
             progress = self.podcast_logger.start_progress()
