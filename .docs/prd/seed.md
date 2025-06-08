@@ -11,7 +11,7 @@
 2. スクリプトを **Gemini 2.5 Pro／Flash Preview TTS** に渡し、**multi-speaker** 音声（最大 2 人）を生成する。
    * `multiSpeakerVoiceConfig` と `<speaker id="…">` で声を分離。([ai.google.dev][1])
    * 同モデルは 24 言語・複数声色をサポートし、自然な対話を生成できる。([developers.googleblog.com][2])
-3. 章別 MP3 と、章を連結した **episode.mp3** を出力し、チャプターマーカー付き RSS もオプション生成。
+3. 章別 MP3 と、章を連結した **episode.mp3** を出力。個人利用向けのため、ローカル音声ファイル生成のみに特化。
 
 ---
 
@@ -24,10 +24,9 @@
 | FR-3 | **マルチスピーカー TTS**: <br> `model:"gemini-2.5-pro-preview-tts"` などを使用し、<br> `responseModalities:["AUDIO"]`, `multiSpeakerVoiceConfig` を含むリクエストで MP3 を取得。 |
 | FR-4 | **ファイル出力**: 章ごとに `01_Intro.txt` / `01_Intro.mp3`、全章連結 `episode.mp3`、`manifest.json` を保存。                                                             |
 | FR-5 | **チャプタータグ**: `episode.mp3` に ID3v2 `CHAP` / `CTOC` を埋め込み、再生アプリでスキップ可能に。                                                                              |
-| FR-6 | **RSS 生成**: `--rss` 指定時に `feed.xml` を出力し、ホスティング先 URL を反映。                                                                                            |
-| FR-7 | **並列処理**: 章単位で Gemini Text → TTS を非同期実行 (`--max-concurrency`)。                                                                                       |
-| FR-8 | **再実行制御**: `--skip-existing` で既存 MP3/TXT をスキップ。                                                                                                      |
-| FR-9 | **ログ**: `rich` + `tqdm` でプログレスバー、詳細は `logs/tool.log`。                                                                                                |
+| FR-6 | **並列処理**: 章単位で Gemini Text → TTS を非同期実行 (`--max-concurrency`)。                                                                                       |
+| FR-7 | **再実行制御**: `--skip-existing` で既存 MP3/TXT をスキップ。                                                                                                      |
+| FR-8 | **ログ**: `rich` + `tqdm` でプログレスバー、詳細は `logs/tool.log`。                                                                                                |
 
 ---
 
@@ -55,7 +54,6 @@ $ pdf_podcast \
     --bgm              ./assets/jingle.mp3 \
     --max-concurrency  4 \
     --skip-existing \
-    --rss --site-url "https://example.com"
 ```
 
 | オプション                            | 説明                                   | 必須 |
@@ -64,7 +62,6 @@ $ pdf_podcast \
 | `--model`                        | Gemini TTS モデル ID（Pro か Flash TTS 系） |    |
 | `--voice-host` / `--voice-guest` | 話者ごとの `voiceName`                    |    |
 | `--bgm`                          | ジングル or BGM MP3 を挿入                  |    |
-| `--rss`                          | RSS を生成（`--site-url` と併用）            |    |
 | `--max-concurrency`              | 章単位の並列実行数                            |    |
 | `--skip-existing`                | 既存ファイル上書き防止                          |    |
 
@@ -80,7 +77,6 @@ pdf_podcast/
 ├─ tts_client.py        # Gemini TTS ラッパ（multi-speaker）
 ├─ audio_mixer.py       # BGM・正規化・連結
 ├─ id3_tags.py          # CHAP / CTOC 付与
-├─ rss_builder.py       # RSS feed.xml
 ├─ manifest.py          # 進行状況メタ
 └─ tests/               # pytest
 ```
@@ -109,7 +105,7 @@ graph TD
     D --> E[Gemini TTS (multi-speaker)]
     E --> F[音声後処理<br>(BGM・正規化)]
     F --> G[ID3 CHAP 付与 & 連結]
-    G --> H[ファイル保存 / RSS 更新]
+    G --> H[ファイル保存]
 ```
 
 ---
@@ -132,4 +128,3 @@ graph TD
 | UT-02 | 2 章 Podcast | `episode.mp3` 長さ ≈ 各章合計 + BGM     |
 | UT-03 | API キー欠如    | エラーメッセージ & 終了コード 1                |
 | IT-01 | 429 注入      | 再試行ログ記録 & 該当章 `failed_rate_limit` |
-| IT-02 | RSS 検証      | `feed.xml` が Feed Validator 合格    |
