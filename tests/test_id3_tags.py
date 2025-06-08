@@ -91,8 +91,15 @@ class TestChapterTagger:
         """Test adding chapters to MP3 with existing tags."""
         # Setup mock with existing tags
         mock_file = Mock()
-        mock_file.tags = None  # No existing tags
-        mock_file.add_tags = Mock()
+        mock_tags = Mock()
+        mock_tags.keys.return_value = []
+        mock_tags.setall = Mock()
+        
+        mock_file.tags = None  # No existing tags initially
+        # When add_tags is called, set tags to the mock
+        def add_tags_side_effect():
+            mock_file.tags = mock_tags
+        mock_file.add_tags = Mock(side_effect=add_tags_side_effect)
         mock_file.save = Mock()
         mock_mp3.return_value = mock_file
         
@@ -161,19 +168,22 @@ class TestChapterTagger:
         mock_chap1 = Mock()
         mock_chap1.start_time = 0
         mock_chap1.end_time = 120500
-        mock_chap1.sub_frames = [Mock(text=["Introduction"])]
+        from pdf_podcast.id3_tags import TIT2
+        mock_chap1.sub_frames = [TIT2(encoding=3, text=["Introduction"])]
         
         mock_chap2 = Mock()
         mock_chap2.start_time = 120500
         mock_chap2.end_time = 245000
-        mock_chap2.sub_frames = [Mock(text=["Chapter 1"])]
+        mock_chap2.sub_frames = [TIT2(encoding=3, text=["Chapter 1"])]
         
         # Setup tags
-        mock_file.tags = {
+        mock_tags = Mock()
+        mock_tags.__getitem__ = Mock(side_effect=lambda key: {
             'CHAP:chap001': [mock_chap1],
             'CHAP:chap002': [mock_chap2]
-        }
-        mock_file.tags.keys.return_value = ['CHAP:chap001', 'CHAP:chap002']
+        }[key])
+        mock_tags.keys.return_value = ['CHAP:chap001', 'CHAP:chap002']
+        mock_file.tags = mock_tags
         
         mock_mp3.return_value = mock_file
         
@@ -266,12 +276,10 @@ class TestChapterTagger:
         """Test removing chapter tags from MP3."""
         # Setup mock with chapter tags
         mock_file = Mock()
-        mock_file.tags = {
-            'CHAP:chap001': Mock(),
-            'CTOC:toc': Mock(),
-            'TIT2': Mock()  # Regular tag, should not be removed
-        }
-        mock_file.tags.keys.return_value = ['CHAP:chap001', 'CTOC:toc', 'TIT2']
+        mock_tags = Mock()
+        mock_tags.keys.return_value = ['CHAP:chap001', 'CTOC:toc', 'TIT2']
+        mock_tags.__delitem__ = Mock()
+        mock_file.tags = mock_tags
         mock_file.save = Mock()
         mock_mp3.return_value = mock_file
         
@@ -282,7 +290,7 @@ class TestChapterTagger:
         
         assert success
         # Should delete chapter-related keys only
-        assert mock_file.tags.__delitem__.call_count == 2  # CHAP and CTOC
+        assert mock_tags.__delitem__.call_count == 2  # CHAP and CTOC
         mock_file.save.assert_called_once_with(v2_version=4)
     
     @patch('pdf_podcast.id3_tags.MP3')

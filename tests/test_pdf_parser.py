@@ -1,10 +1,11 @@
-import os
 import json
-from unittest.mock import Mock, patch, MagicMock
-import pytest
+import os
 from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
-from pdf_podcast.pdf_parser import PDFParser, Chapter
+import pytest
+
+from pdf_podcast.pdf_parser import Chapter, PDFParser
 
 
 class TestPDFParser:
@@ -28,7 +29,7 @@ class TestPDFParser:
         if Path(sample_pdf_path).exists():
             parser = PDFParser(sample_pdf_path)
             assert parser.pdf_path == Path(sample_pdf_path)
-            assert parser.gemini_model == "gemini-2.0-flash-exp"
+            assert parser.gemini_model == "gemini-2.5-flash-preview-05-20"
     
     def test_init_with_invalid_pdf(self):
         """存在しないPDFファイルでの初期化テスト"""
@@ -91,7 +92,7 @@ class TestPDFParser:
         
         # PDFParserの部分的なインスタンス化
         parser = PDFParser.__new__(PDFParser)
-        parser.gemini_model = "gemini-2.0-flash-exp"
+        parser.gemini_model = "gemini-2.5-flash-preview-05-20"
         parser.total_pages = 50
         
         result = parser._detect_chapters_with_llm("sample text")
@@ -108,7 +109,7 @@ class TestPDFParser:
         mock_genai_model.side_effect = Exception("API Error")
         
         parser = PDFParser.__new__(PDFParser)
-        parser.gemini_model = "gemini-2.0-flash-exp"
+        parser.gemini_model = "gemini-2.5-flash-preview-05-20"
         parser.total_pages = 100
         
         result = parser._detect_chapters_with_llm("sample text")

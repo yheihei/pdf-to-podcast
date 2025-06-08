@@ -26,7 +26,7 @@ PDFファイルから章（チャプター）を検出し、各章のテキス�
 
 ```python
 class PDFParser:
-    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.0-flash-exp"):
+    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.5-flash-preview-05-20"):
         """PDFファイルを読み込み、Gemini APIクライアントを初期化"""
         
     def extract_chapters(self) -> List[Chapter]:

@@ -162,17 +162,22 @@ class TestPodcastLogger:
     def test_add_task_no_progress(self, temp_dir, mock_console):
         """Test adding task when no progress is started."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
-            with patch.object(PodcastLogger, 'start_progress') as mock_start:
-                mock_progress = Mock()
-                mock_progress.add_task.return_value = "task_id_123"
-                mock_start.return_value = mock_progress
-                
-                logger = PodcastLogger(log_dir=temp_dir)
+            logger = PodcastLogger(log_dir=temp_dir)
+            
+            mock_progress = Mock()
+            mock_progress.add_task.return_value = "task_id_123"
+            
+            with patch.object(logger, 'start_progress') as mock_start:
+                def start_progress_side_effect():
+                    logger.progress = mock_progress
+                    return mock_progress
+                mock_start.side_effect = start_progress_side_effect
                 
                 task_id = logger.add_task("Test Task")
                 
                 # Should start progress automatically
                 mock_start.assert_called_once()
+                assert task_id == "task_id_123"
     
     def test_update_task(self, temp_dir, mock_console):
         """Test updating task progress."""
@@ -243,6 +248,8 @@ class TestPodcastLogger:
         """Test printing error message."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir, verbose=False)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             logger.print_error("Test error message")
             
@@ -255,6 +262,8 @@ class TestPodcastLogger:
         """Test printing error with exception in verbose mode."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir, verbose=True)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             exception = ValueError("Test exception")
             logger.print_error("Test error", exception)
@@ -268,6 +277,8 @@ class TestPodcastLogger:
         """Test printing warning message."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             logger.print_warning("Test warning")
             
@@ -280,6 +291,8 @@ class TestPodcastLogger:
         """Test printing success message."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             logger.print_success("Test success")
             
@@ -292,6 +305,8 @@ class TestPodcastLogger:
         """Test printing info message."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             logger.print_info("Test info")
             
@@ -304,6 +319,8 @@ class TestPodcastLogger:
         """Test printing chapter status."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             logger.print_chapter_status("Chapter 1", "completed", "Additional details")
             
@@ -316,8 +333,10 @@ class TestPodcastLogger:
     
     def test_print_chapter_status_no_details(self, temp_dir, mock_console):
         """Test printing chapter status without details."""
-        with patch('pdf_podcast.logging_system.logging_system.logging.basicConfig'):
+        with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             logger.print_chapter_status("Chapter 2", "failed")
             
@@ -351,6 +370,8 @@ class TestPodcastLogger:
         """Test printing info for existing file."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             # Create test file
             test_file = temp_dir / "test.txt"
@@ -368,6 +389,8 @@ class TestPodcastLogger:
         """Test printing info for missing file."""
         with patch('pdf_podcast.logging_system.logging.basicConfig'):
             logger = PodcastLogger(log_dir=temp_dir)
+            # Reset mock to ignore initialization calls
+            mock_console.print.reset_mock()
             
             # Non-existent file
             missing_file = temp_dir / "missing.txt"

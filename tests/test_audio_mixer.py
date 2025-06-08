@@ -31,6 +31,9 @@ def mock_audio_segment():
         mock_segment.__add__ = Mock(return_value=mock_segment)
         mock_segment.overlay = Mock(return_value=mock_segment)
         mock_segment.export = Mock()
+        # Add attributes needed for normalize effect
+        mock_segment.max = 32767  # Maximum sample value for 16-bit audio
+        mock_segment.max_possible_amplitude = 32767  # Maximum possible amplitude
         
         mock.empty.return_value = mock_segment
         mock.silent.return_value = mock_segment
@@ -94,17 +97,25 @@ class TestAudioMixer:
         mock_normalize.assert_called_once()
     
     @patch('pdf_podcast.audio_mixer.AudioSegment')
-    def test_concatenate_with_bgm(self, mock_audio_segment, audio_mixer, temp_dir):
+    @patch('pdf_podcast.audio_mixer.normalize')
+    def test_concatenate_with_bgm(self, mock_normalize, mock_audio_segment, audio_mixer, temp_dir):
         """Test concatenation with background music."""
         # Setup mocks
         mock_segment = Mock()
         mock_segment.__len__ = Mock(return_value=10000)
         mock_segment.__add__ = Mock(return_value=mock_segment)
         mock_segment.overlay = Mock(return_value=mock_segment)
+        mock_segment.__getitem__ = Mock(return_value=mock_segment)  # For BGM slicing
+        mock_segment.__mul__ = Mock(return_value=mock_segment)  # For BGM repeating
+        mock_segment.export = Mock()  # For export method
+        # Add attributes needed for normalize effect
+        mock_segment.max = 32767
+        mock_segment.max_possible_amplitude = 32767
         
         mock_audio_segment.empty.return_value = mock_segment
         mock_audio_segment.silent.return_value = mock_segment
         mock_audio_segment.from_file.return_value = mock_segment
+        mock_normalize.return_value = mock_segment
         
         # Create test files
         audio_files = [temp_dir / "chapter1.mp3"]
@@ -137,7 +148,8 @@ class TestAudioMixer:
             )
     
     @patch('pdf_podcast.audio_mixer.AudioSegment')
-    def test_concatenate_missing_files(self, mock_audio_segment, audio_mixer, temp_dir):
+    @patch('pdf_podcast.audio_mixer.normalize')
+    def test_concatenate_missing_files(self, mock_normalize, mock_audio_segment, audio_mixer, temp_dir):
         """Test concatenation with missing audio files."""
         # Setup mock that raises exception for missing files
         def from_file_side_effect(path):
@@ -148,8 +160,32 @@ class TestAudioMixer:
             return mock_segment
         
         mock_audio_segment.from_file.side_effect = from_file_side_effect
-        mock_audio_segment.empty.return_value = Mock()
-        mock_audio_segment.silent.return_value = Mock()
+        
+        # Create mocks that work with the actual implementation
+        empty_mock = Mock()
+        empty_mock.__len__ = Mock(return_value=0)
+        empty_mock.__add__ = Mock(side_effect=lambda x: x)  # Return the added segment
+        empty_mock.export = Mock()
+        empty_mock.max = 32767
+        empty_mock.max_possible_amplitude = 32767
+        
+        silent_mock = Mock()
+        silent_mock.__len__ = Mock(return_value=1000)
+        silent_mock.__add__ = Mock(return_value=silent_mock)
+        
+        # Create a chapter mock that will be returned by from_file for existing files
+        chapter_mock = Mock()
+        chapter_mock.__len__ = Mock(return_value=10000)
+        chapter_mock.__add__ = Mock(return_value=chapter_mock)
+        chapter_mock.export = Mock()
+        
+        mock_audio_segment.empty.return_value = empty_mock
+        mock_audio_segment.silent.return_value = silent_mock
+        
+        # For the existing file, empty_mock + chapter_mock should return chapter_mock 
+        empty_mock.__add__ = Mock(return_value=chapter_mock)
+        
+        mock_normalize.return_value = chapter_mock
         
         # Create test files (some missing)
         audio_files = [
@@ -219,15 +255,21 @@ class TestAudioMixer:
         mock_segment.export.assert_called_once()
     
     @patch('pdf_podcast.audio_mixer.AudioSegment')
-    def test_apply_audio_effects(self, mock_audio_segment, audio_mixer, temp_dir):
+    @patch('pdf_podcast.audio_mixer.normalize')
+    def test_apply_audio_effects(self, mock_normalize, mock_audio_segment, audio_mixer, temp_dir):
         """Test applying audio effects."""
         # Setup mock
         mock_segment = Mock()
         mock_segment.__add__ = Mock(return_value=mock_segment)
         mock_segment.fade_in = Mock(return_value=mock_segment)
         mock_segment.fade_out = Mock(return_value=mock_segment)
+        mock_segment.export = Mock()
+        # Add attributes needed for normalize effect
+        mock_segment.max = 32767
+        mock_segment.max_possible_amplitude = 32767
         
         mock_audio_segment.from_file.return_value = mock_segment
+        mock_normalize.return_value = mock_segment
         
         input_file = temp_dir / "input.mp3"
         output_file = temp_dir / "output.mp3"

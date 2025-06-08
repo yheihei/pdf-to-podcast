@@ -123,7 +123,7 @@ class ChapterTagger:
             ctoc_frame = CTOC(
                 encoding=3,
                 element_id="toc",
-                flags=CTOC.TOP_LEVEL | CTOC.ORDERED,
+                flags=0x03,  # TOP_LEVEL (0x01) | ORDERED (0x02)
                 child_element_ids=chapter_ids,
                 sub_frames=[
                     TIT2(encoding=3, text="Table of Contents")
