@@ -20,14 +20,25 @@ class TestTTSClient:
     @pytest.fixture
     def tts_client(self, mock_genai):
         """Create TTSClient instance with mocked API."""
-        return TTSClient(api_key="test-api-key", model_name="test-tts-model")
+        return TTSClient(api_key="test-api-key", model_name="test-tts-model", 
+                        sample_rate=22050, channels=1, bitrate="128k")
     
     def test_init(self, mock_genai):
         """Test TTSClient initialization."""
-        client = TTSClient(api_key="test-key", model_name="custom-tts-model")
+        client = TTSClient(api_key="test-key", model_name="custom-tts-model", 
+                          sample_rate=16000, channels=2, bitrate="320k")
         
         mock_genai.Client.assert_called_once_with(api_key="test-key")
         assert client.model_name == "custom-tts-model"
+        assert client.sample_rate == 16000
+        assert client.channels == 2
+        assert client.bitrate == "320k"
+        
+        # Test defaults
+        default_client = TTSClient(api_key="test-key")
+        assert default_client.sample_rate == 22050
+        assert default_client.channels == 1
+        assert default_client.bitrate == "128k"
     
     
     def test_generate_audio_success(self, tts_client, mock_genai):

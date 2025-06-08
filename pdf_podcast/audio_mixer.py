@@ -12,13 +12,15 @@ logger = logging.getLogger(__name__)
 class AudioMixer:
     """Handles audio mixing operations for podcast generation."""
     
-    def __init__(self, bitrate: str = "320k"):
+    def __init__(self, bitrate: str = "128k", channels: int = 1):
         """Initialize audio mixer.
         
         Args:
-            bitrate: Output audio bitrate (e.g., "320k", "192k")
+            bitrate: Output audio bitrate (e.g., "128k", "192k", "320k")
+            channels: Number of audio channels (1 for mono, 2 for stereo)
         """
         self.bitrate = bitrate
+        self.channels = channels
         
     def concatenate_chapters(
         self,
@@ -113,7 +115,7 @@ class AudioMixer:
         export_params = {
             "format": "mp3",
             "bitrate": self.bitrate,
-            "parameters": ["-ac", "2"]  # Ensure stereo output
+            "parameters": ["-ac", str(self.channels)]  # Channel count based on quality setting
         }
         
         episode.export(str(output_path), **export_params)

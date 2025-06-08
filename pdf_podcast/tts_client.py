@@ -10,6 +10,7 @@ from google import genai
 from google.genai import types
 import wave
 from pathlib import Path
+from pydub import AudioSegment
 
 if TYPE_CHECKING:
     from .script_builder import SectionScript
@@ -28,15 +29,22 @@ class VoiceConfig:
 class TTSClient:
     """Generates single-speaker audio from lecture scripts using Gemini TTS API."""
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-pro-preview-tts"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-pro-preview-tts", 
+                 sample_rate: int = 22050, channels: int = 1, bitrate: str = "128k"):
         """Initialize TTS client with Gemini API configuration.
         
         Args:
             api_key: Google API key for Gemini
             model_name: Gemini TTS model to use
+            sample_rate: Audio sample rate in Hz
+            channels: Number of audio channels (1=mono, 2=stereo)
+            bitrate: Output MP3 bitrate
         """
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.bitrate = bitrate
         
     def generate_audio(
         self,
@@ -81,16 +89,19 @@ class TTSClient:
             # Extract audio data from the new API response format
             audio_data = response.candidates[0].content.parts[0].inline_data.data
             
-            # Convert to MP3 format if needed (the API returns WAV by default)
-            # For now, we'll save as WAV and change the extension later
+            # Save and convert to MP3 with proper encoding
             if output_path:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                # Change extension to .wav since that's what we're getting
-                wav_path = output_path.with_suffix('.wav')
-                self._save_wav_file(wav_path, audio_data)
-                # For compatibility, rename to .mp3 extension (even though it's WAV data)
-                wav_path.rename(output_path)
-                logger.info(f"Audio saved to {output_path}")
+                # Save as temporary WAV file first
+                temp_wav_path = output_path.with_suffix('.wav')
+                self._save_wav_file(temp_wav_path, audio_data)
+                
+                # Convert WAV to MP3 with proper bitrate and channel settings
+                self._convert_wav_to_mp3(temp_wav_path, output_path)
+                
+                # Clean up temporary WAV file
+                temp_wav_path.unlink()
+                logger.info(f"Audio saved to {output_path} ({self.bitrate}, {self.channels}ch)")
             
             return audio_data
             
@@ -100,21 +111,56 @@ class TTSClient:
     
     
     
-    def _save_wav_file(self, filename: Path, pcm_data: bytes, channels: int = 1, rate: int = 24000, sample_width: int = 2) -> None:
+    def _save_wav_file(self, filename: Path, pcm_data: bytes, channels: int = None, rate: int = None, sample_width: int = 2) -> None:
         """Save PCM audio data as a WAV file.
         
         Args:
             filename: Path to save the WAV file
             pcm_data: Raw PCM audio data
-            channels: Number of audio channels
-            rate: Sample rate in Hz
+            channels: Number of audio channels (uses instance default if None)
+            rate: Sample rate in Hz (uses instance default if None)
             sample_width: Sample width in bytes
         """
+        # Use instance defaults if not specified
+        channels = channels or self.channels
+        rate = rate or self.sample_rate
+        
         with wave.open(str(filename), "wb") as wf:
             wf.setnchannels(channels)
             wf.setsampwidth(sample_width)
             wf.setframerate(rate)
             wf.writeframes(pcm_data)
+    
+    def _convert_wav_to_mp3(self, wav_path: Path, mp3_path: Path) -> None:
+        """Convert WAV file to MP3 with quality settings.
+        
+        Args:
+            wav_path: Path to input WAV file
+            mp3_path: Path to output MP3 file
+        """
+        try:
+            # Load WAV file
+            audio = AudioSegment.from_wav(str(wav_path))
+            
+            # Apply channel conversion if needed
+            if self.channels == 1 and audio.channels > 1:
+                audio = audio.set_channels(1)  # Convert to mono
+            elif self.channels == 2 and audio.channels == 1:
+                audio = audio.set_channels(2)  # Convert to stereo
+            
+            # Export as MP3 with specified bitrate
+            audio.export(
+                str(mp3_path),
+                format="mp3",
+                bitrate=self.bitrate,
+                parameters=["-ac", str(self.channels)]
+            )
+            logger.debug(f"Converted {wav_path} to {mp3_path} (bitrate: {self.bitrate})")
+            
+        except Exception as e:
+            logger.error(f"Failed to convert WAV to MP3: {e}")
+            # Fallback: just rename the file
+            wav_path.rename(mp3_path)
     
     def generate_chapter_audios(
         self,
