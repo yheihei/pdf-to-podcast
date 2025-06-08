@@ -134,8 +134,7 @@ class PodcastGenerator:
         config_data = {
             "Input PDF": self.args.input,
             "Output Directory": self.args.output_dir,
-            "Host Voice": self.args.voice_host,
-            "Guest Voice": self.args.voice_guest,
+            "Voice": self.args.voice,
             "Max Concurrency": self.args.max_concurrency,
             "Skip Existing": self.args.skip_existing,
             "Bitrate": self.args.bitrate,
@@ -205,8 +204,7 @@ class PodcastGenerator:
                     output_dir=str(self.output_dir),
                     chapters=chapter_infos,
                     model=f"PDF:{self.model_config.pdf_model}, Script:{self.model_config.script_model}, TTS:{self.model_config.tts_model}",
-                    voice_host=self.args.voice_host,
-                    voice_guest=self.args.voice_guest,
+                    voice=self.args.voice,
                     max_concurrency=self.args.max_concurrency,
                     skip_existing=self.args.skip_existing,
                     bgm_path=self.args.bgm
@@ -288,10 +286,10 @@ class PodcastGenerator:
             # Initialize TTS client with configured model
             self.tts_client = TTSClient(self.api_key, self.model_config.tts_model)
             
-            # Convert scripts to dialogue lines format
-            dialogue_scripts = {}
+            # Convert scripts to lecture content format
+            lecture_scripts = {}
             for title, script in scripts.items():
-                dialogue_scripts[title] = script.lines
+                lecture_scripts[title] = script.content
             
             # Setup output directory for audio
             audio_dir = self.output_dir / "audio" / self.timestamp
@@ -301,10 +299,9 @@ class PodcastGenerator:
             task_id = self.podcast_logger.add_task(f"Generating audio for {len(scripts)} chapters...", total=len(scripts))
             
             audio_paths = await self.tts_client.generate_chapter_audios_async(
-                scripts=dialogue_scripts,
+                scripts=lecture_scripts,
                 output_dir=audio_dir,
-                voice_host=self.args.voice_host,
-                voice_guest=self.args.voice_guest,
+                voice=self.args.voice,
                 max_concurrency=self.args.max_concurrency,
                 skip_existing=self.args.skip_existing
             )
@@ -433,7 +430,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   pdf_podcast --input book.pdf --output-dir ./podcast
   pdf_podcast --input book.pdf --output-dir ./podcast --max-concurrency 2 --skip-existing
-  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice-host Kore
+  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice Kore
         """
     )
     
@@ -472,17 +469,10 @@ Examples:
     )
     
     parser.add_argument(
-        "--voice-host",
+        "--voice",
         type=str,
         default="Kore",
-        help="Voice name for Host speaker (default: Kore)"
-    )
-    
-    parser.add_argument(
-        "--voice-guest",
-        type=str,
-        default="Puck",
-        help="Voice name for Guest speaker (default: Puck)"
+        help="Voice name for the lecturer (default: Kore)"
     )
     
     parser.add_argument(

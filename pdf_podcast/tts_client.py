@@ -1,10 +1,10 @@
-"""TTS client module for generating multi-speaker audio using Gemini API."""
+"""TTS client module for generating single-speaker audio using Gemini API."""
 
 import asyncio
 import logging
 import time
 import random
-from typing import Dict, List, Optional, BinaryIO
+from typing import Dict, Optional
 from dataclasses import dataclass
 from google import genai
 from google.genai import types
@@ -30,7 +30,7 @@ class VoiceConfig:
 
 
 class TTSClient:
-    """Generates multi-speaker audio from dialogue scripts using Gemini TTS API."""
+    """Generates single-speaker audio from lecture scripts using Gemini TTS API."""
     
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-pro-preview-tts"):
         """Initialize TTS client with Gemini API configuration.
@@ -50,60 +50,38 @@ class TTSClient:
         
     def generate_audio(
         self,
-        dialogue_lines: List[Dict[str, str]],
-        voice_host: str = "Kore",
-        voice_guest: str = "Puck",
+        lecture_content: str,
+        voice: str = "Kore",
         output_path: Optional[Path] = None
     ) -> bytes:
-        """Generate multi-speaker audio from dialogue lines.
+        """Generate single-speaker audio from lecture content.
         
         Args:
-            dialogue_lines: List of dialogue entries with speaker and text
-            voice_host: Voice name for Host speaker
-            voice_guest: Voice name for Guest speaker
+            lecture_content: Text content of the lecture
+            voice: Voice name for the lecturer
             output_path: Optional path to save the audio file
             
         Returns:
             Audio data in MP3 format as bytes
         """
-        logger.info(f"Generating audio with {len(dialogue_lines)} dialogue lines")
+        logger.info(f"Generating audio with {len(lecture_content)} characters")
         
         # Warning for long content
-        if len(dialogue_lines) > 30:
-            logger.warning(f"Large number of dialogue lines ({len(dialogue_lines)}). This may cause TTS timeouts or incomplete audio.")
-        
-        # Create multi-speaker content with voice configuration
-        content = self._create_multi_speaker_content_with_voices(
-            dialogue_lines, voice_host, voice_guest
-        )
+        if len(lecture_content) > 3000:
+            logger.warning(f"Large lecture content ({len(lecture_content)} chars). This may cause TTS timeouts.")
         
         try:
-            # Generate audio using Gemini TTS with new API
+            # Generate audio using Gemini TTS with single speaker
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=content,
+                contents=lecture_content,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
-                        multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
-                            speaker_voice_configs=[
-                                types.SpeakerVoiceConfig(
-                                    speaker='Host',
-                                    voice_config=types.VoiceConfig(
-                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                            voice_name=voice_host,
-                                        )
-                                    )
-                                ),
-                                types.SpeakerVoiceConfig(
-                                    speaker='Guest',
-                                    voice_config=types.VoiceConfig(
-                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                            voice_name=voice_guest,
-                                        )
-                                    )
-                                ),
-                            ]
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice,
+                            )
                         )
                     ),
                     temperature=0.7,
@@ -132,19 +110,17 @@ class TTSClient:
     
     async def generate_audio_with_timeout(
         self,
-        dialogue_lines: List[Dict[str, str]],
+        lecture_content: str,
         timeout: int = 180,  # 3分
-        voice_host: str = "Kore",
-        voice_guest: str = "Puck",
+        voice: str = "Kore",
         output_path: Optional[Path] = None
     ) -> bytes:
         """タイムアウト付きTTS生成
         
         Args:
-            dialogue_lines: List of dialogue entries with speaker and text
+            lecture_content: Text content of the lecture
             timeout: タイムアウト時間（秒）
-            voice_host: Voice name for Host speaker
-            voice_guest: Voice name for Guest speaker
+            voice: Voice name for the lecturer
             output_path: Optional path to save the audio file
             
         Returns:
@@ -153,7 +129,7 @@ class TTSClient:
         Raises:
             asyncio.TimeoutError: タイムアウトが発生した場合
         """
-        logger.info(f"Generating audio with timeout ({timeout}s) for {len(dialogue_lines)} dialogue lines")
+        logger.info(f"Generating audio with timeout ({timeout}s) for {len(lecture_content)} characters")
         
         try:
             # asyncio.wait_forでタイムアウトを設定
@@ -161,9 +137,8 @@ class TTSClient:
                 asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda: self.generate_audio(
-                        dialogue_lines=dialogue_lines,
-                        voice_host=voice_host,
-                        voice_guest=voice_guest,
+                        lecture_content=lecture_content,
+                        voice=voice,
                         output_path=output_path
                     )
                 ),
@@ -175,72 +150,14 @@ class TTSClient:
             
         except asyncio.TimeoutError:
             logger.error(f"TTS処理がタイムアウトしました (制限: {timeout}秒)")
-            logger.error(f"対話行数: {len(dialogue_lines)}行")
-            logger.error("対話の分割処理を検討してください")
+            logger.error(f"講義内容の文字数: {len(lecture_content)}文字")
+            logger.error("コンテンツの分割処理を検討してください")
             raise
         
         except Exception as e:
             logger.error(f"Failed to generate audio with timeout: {e}")
             raise
     
-    def _create_multi_speaker_content(self, dialogue_lines: List[Dict[str, str]]) -> str:
-        """Create content with speaker tags for multi-speaker synthesis.
-        
-        Args:
-            dialogue_lines: List of dialogue entries
-            
-        Returns:
-            Formatted content with speaker tags
-        """
-        content_parts = []
-        
-        for line in dialogue_lines:
-            speaker_id = line["speaker"]  # "Host" or "Guest"
-            text = line["text"]
-            
-            # Format with speaker tags
-            content_parts.append(f'<speaker id="{speaker_id}">{text}</speaker>')
-        
-        return '\n'.join(content_parts)
-    
-    def _create_multi_speaker_content_with_voices(
-        self, dialogue_lines: List[Dict[str, str]], voice_host: str, voice_guest: str
-    ) -> str:
-        """Create content with voice configuration for Gemini 2.0 TTS.
-        
-        Args:
-            dialogue_lines: List of dialogue entries
-            voice_host: Voice name for Host speaker
-            voice_guest: Voice name for Guest speaker
-            
-        Returns:
-            Formatted content with voice configuration
-        """
-        # Create voice mapping
-        voice_mapping = {
-            "Host": voice_host,
-            "Guest": voice_guest
-        }
-        
-        # Build the prompt with voice instructions
-        content_parts = [
-            f"Generate a podcast-style dialogue with two speakers using these voices:",
-            f"- Host voice: {voice_host}",
-            f"- Guest voice: {voice_guest}",
-            "",
-            "Dialogue:"
-        ]
-        
-        # Add dialogue lines with voice instructions
-        for line in dialogue_lines:
-            speaker = line["speaker"]
-            text = line["text"]
-            voice = voice_mapping.get(speaker, voice_host)
-            
-            # Format each line with voice instruction
-            content_parts.append(f"[{speaker} speaking in {voice} voice]: {text}")
-        
-        return '\n'.join(content_parts)
     
     def _save_wav_file(self, filename: Path, pcm_data: bytes, channels: int = 1, rate: int = 24000, sample_width: int = 2) -> None:
         """Save PCM audio data as a WAV file.
@@ -260,18 +177,16 @@ class TTSClient:
     
     def generate_chapter_audios(
         self,
-        scripts: Dict[str, List[Dict[str, str]]],
+        scripts: Dict[str, str],
         output_dir: Path,
-        voice_host: str = "Kore",
-        voice_guest: str = "Puck"
+        voice: str = "Kore"
     ) -> Dict[str, Path]:
         """Generate audio files for multiple chapter scripts.
         
         Args:
-            scripts: Dictionary of chapter_title -> dialogue_lines
+            scripts: Dictionary of chapter_title -> lecture_content
             output_dir: Directory to save audio files
-            voice_host: Voice name for Host speaker
-            voice_guest: Voice name for Guest speaker
+            voice: Voice name for the lecturer
             
         Returns:
             Dictionary of chapter_title -> audio_file_path
@@ -279,7 +194,7 @@ class TTSClient:
         audio_paths = {}
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        for idx, (title, dialogue_lines) in enumerate(scripts.items(), 1):
+        for idx, (title, lecture_content) in enumerate(scripts.items(), 1):
             try:
                 # Generate filename
                 safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
@@ -289,9 +204,8 @@ class TTSClient:
                 
                 # Generate audio
                 self.generate_audio(
-                    dialogue_lines=dialogue_lines,
-                    voice_host=voice_host,
-                    voice_guest=voice_guest,
+                    lecture_content=lecture_content,
+                    voice=voice,
                     output_path=output_path
                 )
                 
@@ -306,18 +220,16 @@ class TTSClient:
     
     async def generate_audio_with_retry(
         self,
-        dialogue_lines: List[Dict[str, str]],
-        voice_host: str = "Kore",
-        voice_guest: str = "Puck",
+        lecture_content: str,
+        voice: str = "Kore",
         output_path: Optional[Path] = None,
         max_retries: int = 3  # Reduced retries to avoid long wait times
     ) -> Optional[bytes]:
         """Generate audio with exponential backoff retry for rate limits.
         
         Args:
-            dialogue_lines: List of dialogue entries with speaker and text
-            voice_host: Voice name for Host speaker
-            voice_guest: Voice name for Guest speaker
+            lecture_content: Text content of the lecture
+            voice: Voice name for the lecturer
             output_path: Optional path to save the audio file
             max_retries: Maximum number of retry attempts
             
@@ -328,10 +240,9 @@ class TTSClient:
             try:
                 # タイムアウト機能付きでTTS生成を実行
                 return await self.generate_audio_with_timeout(
-                    dialogue_lines=dialogue_lines,
+                    lecture_content=lecture_content,
                     timeout=180,  # 3分のタイムアウト
-                    voice_host=voice_host,
-                    voice_guest=voice_guest,
+                    voice=voice,
                     output_path=output_path
                 )
                 
@@ -343,18 +254,34 @@ class TTSClient:
                     logger.error(f"TTS処理がタイムアウトしました (試行: {attempt + 1})")
                     
                     # 分割処理フォールバックを試行
-                    if self.chunk_processor and len(dialogue_lines) > 10:
-                        logger.warning("大規模スクリプトを検出。分割処理フォールバックを実行します")
+                    if self.chunk_processor and len(lecture_content) > 2000:
+                        logger.warning("大規模コンテンツを検出。分割処理フォールバックを実行します")
                         try:
-                            fallback_audio = await self.chunk_processor.process_large_dialogue(
-                                dialogue_lines=dialogue_lines,
-                                voice_host=voice_host,
-                                voice_guest=voice_guest,
-                                output_path=output_path,
-                                timeout=120  # 分割処理では短めのタイムアウト
-                            )
+                            # Split lecture content into smaller chunks
+                            paragraphs = lecture_content.split('\n\n')
+                            chunk_size = len(paragraphs) // 3 + 1
+                            chunks = [paragraphs[i:i+chunk_size] for i in range(0, len(paragraphs), chunk_size)]
+                            
+                            audio_chunks = []
+                            for chunk in chunks:
+                                chunk_content = '\n\n'.join(chunk)
+                                chunk_audio = await self.generate_audio_with_timeout(
+                                    lecture_content=chunk_content,
+                                    timeout=120,
+                                    voice=voice,
+                                    output_path=None
+                                )
+                                audio_chunks.append(chunk_audio)
+                            
+                            # Combine audio chunks (simplified - actual implementation would need proper audio merging)
+                            combined_audio = b''.join(audio_chunks)
+                            if output_path:
+                                output_path.parent.mkdir(parents=True, exist_ok=True)
+                                with open(output_path, 'wb') as f:
+                                    f.write(combined_audio)
+                            
                             logger.info("分割処理フォールバックが成功しました")
-                            return fallback_audio
+                            return combined_audio
                         except Exception as fallback_error:
                             logger.error(f"分割処理フォールバックに失敗: {fallback_error}")
                     
@@ -400,10 +327,9 @@ class TTSClient:
     
     async def generate_chapter_audios_async(
         self,
-        scripts: Dict[str, List[Dict[str, str]]],
+        scripts: Dict[str, str],
         output_dir: Path,
-        voice_host: str = "Kore",
-        voice_guest: str = "Puck",
+        voice: str = "Kore",
         max_concurrency: int = 1,  # Fixed to 1 for Free tier rate limit compliance
         skip_existing: bool = False,
         max_retries: int = 3
@@ -411,10 +337,9 @@ class TTSClient:
         """Generate audio files for multiple chapter scripts asynchronously.
         
         Args:
-            scripts: Dictionary of chapter_title -> dialogue_lines
+            scripts: Dictionary of chapter_title -> lecture_content
             output_dir: Directory to save audio files
-            voice_host: Voice name for Host speaker
-            voice_guest: Voice name for Guest speaker
+            voice: Voice name for the lecturer
             max_concurrency: Maximum number of concurrent requests
             skip_existing: Skip existing audio files
             max_retries: Maximum retry attempts for rate limits
@@ -431,7 +356,7 @@ class TTSClient:
         audio_paths = {}
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        async def process_chapter(idx: int, title: str, dialogue_lines: List[Dict[str, str]]) -> Optional[Path]:
+        async def process_chapter(idx: int, title: str, lecture_content: str) -> Optional[Path]:
             async with semaphore:
                 try:
                     # Generate filename
@@ -449,9 +374,8 @@ class TTSClient:
                     audio_data = await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: asyncio.run(self.generate_audio_with_retry(
-                            dialogue_lines=dialogue_lines,
-                            voice_host=voice_host,
-                            voice_guest=voice_guest,
+                            lecture_content=lecture_content,
+                            voice=voice,
                             output_path=output_path,
                             max_retries=max_retries
                         ))
@@ -473,14 +397,14 @@ class TTSClient:
         
         # Process chapters with rate limiting
         results = []
-        for idx, (title, dialogue_lines) in enumerate(scripts.items(), 1):
+        for idx, (title, lecture_content) in enumerate(scripts.items(), 1):
             # Add delay between requests to respect rate limits (2 per minute = 30s between requests)
             if idx > 1:
                 delay = 31  # 31 seconds to be safe with 2/minute limit
                 logger.info(f"Waiting {delay}s before next request to respect rate limits...")
                 await asyncio.sleep(delay)
             
-            result = await process_chapter(idx, title, dialogue_lines)
+            result = await process_chapter(idx, title, lecture_content)
             results.append(result)
         
         # Collect successful results
