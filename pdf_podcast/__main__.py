@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import datetime
 import os
 import sys
 import signal
@@ -81,6 +82,9 @@ class PodcastGenerator:
             Exit code (0 for success, non-zero for error)
         """
         try:
+            # Generate timestamp for this execution
+            self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
             # Print header
             self.podcast_logger.print_header(
                 "PDF Podcast Generator",
@@ -230,7 +234,7 @@ class PodcastGenerator:
             chapter_content = {ch.title: ch.text for ch in chapters}
             
             # Setup output directory for scripts
-            scripts_dir = self.output_dir / "scripts"
+            scripts_dir = self.output_dir / "scripts" / self.timestamp
             
             # Generate scripts asynchronously
             progress = self.podcast_logger.start_progress()
@@ -287,7 +291,7 @@ class PodcastGenerator:
                 dialogue_scripts[title] = script.lines
             
             # Setup output directory for audio
-            audio_dir = self.output_dir / "audio"
+            audio_dir = self.output_dir / "audio" / self.timestamp
             
             # Generate audio asynchronously
             progress = self.podcast_logger.start_progress()
