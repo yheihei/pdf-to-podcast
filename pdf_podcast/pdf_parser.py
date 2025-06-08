@@ -10,6 +10,8 @@ from pdfminer.high_level import extract_pages, extract_text
 from pdfminer.layout import LTTextContainer
 from pypdf import PdfReader
 
+from .rate_limiter import GeminiRateLimiter, RateLimitConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +52,11 @@ class PDFParser:
         else:
             logger.warning("Google API key not found. Please set GOOGLE_API_KEY environment variable.")
         
-    def extract_chapters(self) -> List[Chapter]:
+        # レートリミッターの初期化
+        rate_limit_config = RateLimitConfig(rpm_limit=15)  # Free tier
+        self.rate_limiter = GeminiRateLimiter(rate_limit_config)
+        
+    async def extract_chapters(self) -> List[Chapter]:
         """
         LLMを使用して章を検出し、各章のテキストを抽出
         
@@ -63,7 +69,7 @@ class PDFParser:
         sample_text = self._get_sample_text()
         
         # LLMで章を検出
-        chapter_info = self._detect_chapters_with_llm(sample_text)
+        chapter_info = await self._detect_chapters_with_llm(sample_text)
         
         # 各章のテキストを抽出
         chapters = []
@@ -130,7 +136,7 @@ class PDFParser:
             
         return sample_text
     
-    def _detect_chapters_with_llm(self, sample_text: str) -> List[dict]:
+    async def _detect_chapters_with_llm(self, sample_text: str) -> List[dict]:
         """
         Gemini APIで章構造を解析
         
@@ -170,7 +176,10 @@ PDFテキスト：
 {sample_text}
 """
             
-            response = model.generate_content(prompt)
+            # Use rate limiter for API call
+            response = await self.rate_limiter.call_with_backoff(
+                model.generate_content, prompt
+            )
             result_text = response.text.strip()
             
             # JSONを抽出（マークダウンコードブロックに囲まれている場合も考慮）
