@@ -13,13 +13,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Import chunk processor for fallback handling
-try:
-    from .tts_chunk_processor import TTSChunkProcessor
-    CHUNK_PROCESSOR_AVAILABLE = True
-except ImportError:
-    CHUNK_PROCESSOR_AVAILABLE = False
-    logger.warning("TTSChunkProcessorが利用できません。分割処理フォールバックが無効になります。")
 
 
 @dataclass
@@ -41,12 +34,6 @@ class TTSClient:
         """
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
-        
-        # チャンクプロセッサーの初期化
-        if CHUNK_PROCESSOR_AVAILABLE:
-            self.chunk_processor = TTSChunkProcessor(tts_client=self)
-        else:
-            self.chunk_processor = None
         
     def generate_audio(
         self,
@@ -108,55 +95,6 @@ class TTSClient:
             logger.error(f"Failed to generate audio: {e}")
             raise
     
-    async def generate_audio_with_timeout(
-        self,
-        lecture_content: str,
-        timeout: int = 180,  # 3分
-        voice: str = "Kore",
-        output_path: Optional[Path] = None
-    ) -> bytes:
-        """タイムアウト付きTTS生成
-        
-        Args:
-            lecture_content: Text content of the lecture
-            timeout: タイムアウト時間（秒）
-            voice: Voice name for the lecturer
-            output_path: Optional path to save the audio file
-            
-        Returns:
-            Audio data in MP3 format as bytes
-            
-        Raises:
-            asyncio.TimeoutError: タイムアウトが発生した場合
-        """
-        logger.info(f"Generating audio with timeout ({timeout}s) for {len(lecture_content)} characters")
-        
-        try:
-            # asyncio.wait_forでタイムアウトを設定
-            audio_data = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.generate_audio(
-                        lecture_content=lecture_content,
-                        voice=voice,
-                        output_path=output_path
-                    )
-                ),
-                timeout=timeout
-            )
-            
-            logger.info(f"Audio generation completed within timeout")
-            return audio_data
-            
-        except asyncio.TimeoutError:
-            logger.error(f"TTS処理がタイムアウトしました (制限: {timeout}秒)")
-            logger.error(f"講義内容の文字数: {len(lecture_content)}文字")
-            logger.error("コンテンツの分割処理を検討してください")
-            raise
-        
-        except Exception as e:
-            logger.error(f"Failed to generate audio with timeout: {e}")
-            raise
     
     
     def _save_wav_file(self, filename: Path, pcm_data: bytes, channels: int = 1, rate: int = 24000, sample_width: int = 2) -> None:
@@ -238,63 +176,21 @@ class TTSClient:
         """
         for attempt in range(max_retries + 1):
             try:
-                # タイムアウト機能付きでTTS生成を実行
-                return await self.generate_audio_with_timeout(
-                    lecture_content=lecture_content,
-                    timeout=180,  # 3分のタイムアウト
-                    voice=voice,
-                    output_path=output_path
+                # 直接TTS生成を実行
+                return await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.generate_audio(
+                        lecture_content=lecture_content,
+                        voice=voice,
+                        output_path=output_path
+                    )
                 )
                 
             except Exception as e:
                 error_msg = str(e).lower()
                 
-                # Check if it's a timeout error
-                if isinstance(e, asyncio.TimeoutError) or "timeout" in error_msg:
-                    logger.error(f"TTS処理がタイムアウトしました (試行: {attempt + 1})")
-                    
-                    # 分割処理フォールバックを試行
-                    if self.chunk_processor and len(lecture_content) > 2000:
-                        logger.warning("大規模コンテンツを検出。分割処理フォールバックを実行します")
-                        try:
-                            # Split lecture content into smaller chunks
-                            paragraphs = lecture_content.split('\n\n')
-                            chunk_size = len(paragraphs) // 3 + 1
-                            chunks = [paragraphs[i:i+chunk_size] for i in range(0, len(paragraphs), chunk_size)]
-                            
-                            audio_chunks = []
-                            for chunk in chunks:
-                                chunk_content = '\n\n'.join(chunk)
-                                chunk_audio = await self.generate_audio_with_timeout(
-                                    lecture_content=chunk_content,
-                                    timeout=120,
-                                    voice=voice,
-                                    output_path=None
-                                )
-                                audio_chunks.append(chunk_audio)
-                            
-                            # Combine audio chunks (simplified - actual implementation would need proper audio merging)
-                            combined_audio = b''.join(audio_chunks)
-                            if output_path:
-                                output_path.parent.mkdir(parents=True, exist_ok=True)
-                                with open(output_path, 'wb') as f:
-                                    f.write(combined_audio)
-                            
-                            logger.info("分割処理フォールバックが成功しました")
-                            return combined_audio
-                        except Exception as fallback_error:
-                            logger.error(f"分割処理フォールバックに失敗: {fallback_error}")
-                    
-                    if attempt < max_retries:
-                        logger.warning(f"タイムアウトによるリトライ {attempt + 1}/{max_retries}")
-                        await asyncio.sleep(5)  # 短い待機時間
-                        continue
-                    else:
-                        logger.error("タイムアウトの最大リトライ回数に達しました")
-                        raise Exception("failed_timeout")
-                
                 # Check if it's a rate limit error
-                elif "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
+                if "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
                     if attempt < max_retries:
                         # For Gemini's strict rate limit (2 requests per minute), use longer wait times
                         # Base wait time of 30 seconds + exponential backoff
