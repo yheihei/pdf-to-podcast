@@ -195,3 +195,6 @@ logs/
 
 # Cache
 .cache/
+
+# Output files
+output/

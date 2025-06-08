@@ -24,7 +24,7 @@ class Chapter:
 class PDFParser:
     """PDFファイルから章を検出し、テキストを抽出するクラス"""
     
-    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.0-flash-exp"):
+    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.5-flash-preview-05-20"):
         """
         PDFパーサーを初期化
         

@@ -21,7 +21,7 @@ class DialogueScript:
 class ScriptBuilder:
     """Generates podcast dialogue scripts from chapter content using Gemini API."""
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-pro-preview-06-05"):
         """Initialize ScriptBuilder with Gemini API configuration.
         
         Args:
