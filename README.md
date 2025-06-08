@@ -33,8 +33,8 @@ PDFファイルから対話形式のポッドキャスト音声を自動生成�
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/your-username/pdf-podcast.git
-cd pdf-podcast
+git clone https://https://github.com/yheihei/pdf-to-podcast
+cd pdf-to-podcast
 
 # 依存関係をインストール
 pip install -r requirements.txt
@@ -276,7 +276,3 @@ flake8 pdf_podcast/
 ## 📄 ライセンス
 
 MIT License
-
-## 🙋‍♂️ サポート
-
-バグ報告や機能要望は [Issues](https://github.com/your-username/pdf-podcast/issues) までお願いします。
