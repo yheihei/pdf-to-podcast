@@ -89,15 +89,17 @@ output/
 ├── episode.mp3          # 最終的なポッドキャストファイル
 ├── manifest.json        # 処理の進捗情報
 ├── scripts/            # 生成された講義スクリプト
-│   └── timestamp/
+│   └── filename/       # PDFファイル名ベースのディレクトリ
 │       ├── chapter1.txt
 │       └── chapter2.txt
 ├── audio/              # 章ごとの音声ファイル
-│   └── timestamp/
+│   └── filename/       # PDFファイル名ベースのディレクトリ
 │       ├── 01_chapter1.mp3
 │       └── 02_chapter2.mp3
 └── logs/               # ログファイル
 ```
+
+**注意**: ディレクトリ名は入力PDFファイル名（拡張子なし）から生成されます。同名のファイルが複数回処理される場合は、自動的に連番が付与されます（例：`document`, `document_2`, `document_3`）。
 
 ## 講義形式について
 
