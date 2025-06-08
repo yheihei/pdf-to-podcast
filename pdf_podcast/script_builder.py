@@ -1,7 +1,9 @@
 """Script builder module for generating podcast dialogue scripts using Gemini API."""
 
+import asyncio
 import logging
 from typing import Dict, List, Optional
+from pathlib import Path
 import google.generativeai as genai
 from dataclasses import dataclass
 
@@ -162,4 +164,100 @@ Host: [ホストの発言]
                 logger.error(f"Failed to generate script for chapter '{title}': {e}")
                 # Continue with other chapters
                 
+        return scripts
+    
+    def save_script_to_file(self, script: DialogueScript, output_path: Path) -> bool:
+        """Save dialogue script to text file.
+        
+        Args:
+            script: DialogueScript to save
+            output_path: Path to save the script file
+            
+        Returns:
+            True if successful
+        """
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(f"# {script.chapter_title}\n\n")
+                
+                for line in script.lines:
+                    f.write(f"{line['speaker']}: {line['text']}\n\n")
+                
+                f.write(f"# Statistics\n")
+                f.write(f"Total characters: {script.total_chars}\n")
+                f.write(f"Total lines: {len(script.lines)}\n")
+            
+            logger.info(f"Saved script to {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save script to {output_path}: {e}")
+            return False
+    
+    async def generate_scripts_async(
+        self,
+        chapters: Dict[str, str],
+        output_dir: Optional[Path] = None,
+        max_concurrency: int = 4,
+        skip_existing: bool = False
+    ) -> Dict[str, DialogueScript]:
+        """Generate dialogue scripts for multiple chapters asynchronously.
+        
+        Args:
+            chapters: Dictionary of chapter_title -> chapter_content
+            output_dir: Optional directory to save script files
+            max_concurrency: Maximum number of concurrent requests
+            skip_existing: Skip chapters with existing script files
+            
+        Returns:
+            Dictionary of chapter_title -> DialogueScript
+        """
+        semaphore = asyncio.Semaphore(max_concurrency)
+        scripts = {}
+        
+        async def process_chapter(title: str, content: str) -> Optional[DialogueScript]:
+            async with semaphore:
+                try:
+                    # Check if script file already exists
+                    if skip_existing and output_dir:
+                        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                        safe_title = safe_title.replace(' ', '_')[:50]
+                        script_path = output_dir / f"{safe_title}.txt"
+                        
+                        if script_path.exists():
+                            logger.info(f"Skipping existing script: {title}")
+                            return None
+                    
+                    # Generate script (run in thread pool since it's not async)
+                    script = await asyncio.get_event_loop().run_in_executor(
+                        None, self.generate_dialogue_script, title, content
+                    )
+                    
+                    # Save to file if output directory specified
+                    if output_dir:
+                        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                        safe_title = safe_title.replace(' ', '_')[:50]
+                        script_path = output_dir / f"{safe_title}.txt"
+                        self.save_script_to_file(script, script_path)
+                    
+                    return script
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate script for chapter '{title}': {e}")
+                    return None
+        
+        # Process chapters concurrently
+        tasks = [process_chapter(title, content) for title, content in chapters.items()]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Collect successful results
+        for (title, _), result in zip(chapters.items(), results):
+            if isinstance(result, DialogueScript):
+                scripts[title] = result
+                logger.info(f"Generated script for '{title}' with {len(result.lines)} dialogue lines")
+            elif isinstance(result, Exception):
+                logger.error(f"Exception processing chapter '{title}': {result}")
+        
         return scripts
