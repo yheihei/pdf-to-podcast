@@ -74,12 +74,12 @@ export GOOGLE_API_KEY="your_api_key_here"
 
 ```bash
 # 最小限の実行
-python -m pdf_podcast --input book.pdf --output-dir ./podcast
+python -m pdf_podcast --input book.pdf --output-dir ./output
 
 # 詳細オプション付きの実行
 python -m pdf_podcast \
     --input book.pdf \
-    --output-dir ./podcast \
+    --output-dir ./output \
     --model gemini-2.5-pro-preview-tts \
     --voice-host Kore \
     --voice-guest Puck \
