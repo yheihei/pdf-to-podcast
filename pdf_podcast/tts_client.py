@@ -67,10 +67,25 @@ class TTSClient:
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice_host,  # Use the host voice as default
-                            )
+                        multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
+                            speaker_voice_configs=[
+                                types.SpeakerVoiceConfig(
+                                    speaker='Host',
+                                    voice_config=types.VoiceConfig(
+                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                            voice_name=voice_host,
+                                        )
+                                    )
+                                ),
+                                types.SpeakerVoiceConfig(
+                                    speaker='Guest',
+                                    voice_config=types.VoiceConfig(
+                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                            voice_name=voice_guest,
+                                        )
+                                    )
+                                ),
+                            ]
                         )
                     ),
                     temperature=0.7,
