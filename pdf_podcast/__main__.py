@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import datetime
 import os
 import sys
 import signal
@@ -11,11 +10,10 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import logging
 
-import google.generativeai as genai
 from dotenv import load_dotenv
 
 from .pdf_parser import PDFParser, Chapter, Section
-from .script_builder import ScriptBuilder, SectionScript
+from .script_builder import ScriptBuilder
 from .tts_client import TTSClient
 from .audio_mixer import AudioMixer
 from .manifest import ManifestManager, ChapterInfo, ChapterStatus, SectionInfo, SectionStatus
@@ -172,7 +170,7 @@ class PodcastGenerator:
             sys.exit(1)
         return api_key
     
-    def _signal_handler(self, signum, frame):
+    def _signal_handler(self, _signum, _frame):
         """Handle interrupt signal for graceful shutdown."""
         self.podcast_logger.print_warning("Interrupt received. Saving progress...")
         if hasattr(self, 'manifest_manager') and self.manifest_manager:
@@ -506,18 +504,17 @@ class PodcastGenerator:
                 chapter_infos.append(chapter_info)
             
             # Create or load manifest
-            manifest = self.manifest_manager.load_manifest()
-            if manifest is None:
-                manifest = self.manifest_manager.create_manifest(
-                    pdf_path=str(self.args.input),
-                    output_dir=str(self.output_dir),
-                    chapters=chapter_infos,
-                    model=f"PDF:{self.model_config.pdf_model}, Script:{self.model_config.script_model}, TTS:{self.model_config.tts_model}",
-                    voice=self.args.voice,
-                    max_concurrency=self.args.max_concurrency,
-                    skip_existing=self.args.skip_existing,
-                    bgm_path=self.args.bgm
-                )
+            self.manifest_manager.load_manifest()
+            self.manifest_manager.create_manifest(
+                pdf_path=str(self.args.input),
+                output_dir=str(self.output_dir),
+                chapters=chapter_infos,
+                model=f"PDF:{self.model_config.pdf_model}, Script:{self.model_config.script_model}, TTS:{self.model_config.tts_model}",
+                voice=self.args.voice,
+                max_concurrency=self.args.max_concurrency,
+                skip_existing=self.args.skip_existing,
+                bgm_path=self.args.bgm
+            )
             
             # Print progress summary
             summary = self.manifest_manager.get_progress_summary()
@@ -553,7 +550,7 @@ class PodcastGenerator:
                 section_infos.append(section_info)
             
             # Create section manifest (always create new for section processing)
-            manifest = self.manifest_manager.create_section_manifest(
+            self.manifest_manager.create_section_manifest(
                 pdf_path=str(self.args.input),
                 output_dir=str(self.output_dir),
                 sections=section_infos,
@@ -594,7 +591,7 @@ class PodcastGenerator:
             scripts_dir = self.output_dir / "scripts" / self.pdf_dirname
             
             # Generate scripts asynchronously
-            progress = self.podcast_logger.start_progress()
+            self.podcast_logger.start_progress()
             task_id = self.podcast_logger.add_task(f"Generating scripts for {len(chapters)} chapters...", total=len(chapters))
             
             scripts = await self.script_builder.generate_scripts_async(
@@ -655,7 +652,7 @@ class PodcastGenerator:
             audio_dir = self.output_dir / "audio" / self.pdf_dirname
             
             # Generate audio asynchronously
-            progress = self.podcast_logger.start_progress()
+            self.podcast_logger.start_progress()
             task_id = self.podcast_logger.add_task(f"Generating audio for {len(scripts)} chapters...", total=len(scripts))
             
             audio_paths = await self.tts_client.generate_chapter_audios_async(
@@ -707,7 +704,7 @@ class PodcastGenerator:
             # Create episode
             episode_path = self.output_dir / "episode.mp3"
             
-            progress = self.podcast_logger.start_progress()
+            self.podcast_logger.start_progress()
             task_id = self.podcast_logger.add_task("Creating episode...")
             
             total_duration, chapter_timestamps = self.audio_mixer.concatenate_chapters(
