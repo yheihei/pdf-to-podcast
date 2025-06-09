@@ -432,7 +432,12 @@ class PodcastGenerator:
         """
         try:
             # Initialize PDF parser
-            self.pdf_parser = PDFParser(self.args.input, self.model_config.pdf_model, self.api_key)
+            self.pdf_parser = PDFParser(
+                self.args.input, 
+                self.model_config.pdf_model, 
+                self.api_key,
+                manual_offset=getattr(self.args, 'page_offset', None)
+            )
             
             # Extract chapters
             progress = self.podcast_logger.start_progress()
@@ -461,7 +466,12 @@ class PodcastGenerator:
         """
         try:
             # Initialize PDF parser
-            self.pdf_parser = PDFParser(self.args.input, self.model_config.pdf_model, self.api_key)
+            self.pdf_parser = PDFParser(
+                self.args.input, 
+                self.model_config.pdf_model, 
+                self.api_key,
+                manual_offset=getattr(self.args, 'page_offset', None)
+            )
             
             # Extract sections
             progress = self.podcast_logger.start_progress()
@@ -1000,6 +1010,12 @@ Examples:
         type=str,
         metavar="SCRIPTS_DIR",
         help="指定されたスクリプトディレクトリから音声のみを生成（PDF解析とスクリプト生成をスキップ）"
+    )
+    
+    parser.add_argument(
+        "--page-offset",
+        type=int,
+        help="手動ページオフセット指定（論理ページ番号 + オフセット = 物理ページ番号）"
     )
     
     return parser

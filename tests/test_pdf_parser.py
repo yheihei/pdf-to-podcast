@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from pdf_podcast.pdf_parser import Chapter, PDFParser, Section
+from pdfminer.layout import LTTextContainer
 
 
 class TestPDFParser:
@@ -243,3 +244,200 @@ class TestPDFParser:
         assert result[0]["start_page"] == 1
         assert result[0]["end_page"] == 10
         assert result[0]["parent_chapter"] == "Chapter 1"
+    
+    @patch('pdf_podcast.pdf_parser.PdfReader')
+    @patch('pdf_podcast.pdf_parser.Path')
+    def test_init_with_manual_offset(self, mock_path, mock_pdf_reader_class):
+        """手動オフセット指定での初期化テスト"""
+        # モックの設定
+        mock_path.return_value.exists.return_value = True
+        mock_reader = Mock()
+        mock_reader.pages = [Mock() for _ in range(50)]
+        mock_pdf_reader_class.return_value = mock_reader
+        
+        # 手動オフセット指定
+        parser = PDFParser("dummy.pdf", manual_offset=5)
+        
+        assert parser.page_offset == 5
+        assert parser._offset_detected == True
+    
+    @patch('pdf_podcast.pdf_parser.PdfReader')
+    @patch('pdf_podcast.pdf_parser.Path')
+    def test_convert_to_physical_page(self, mock_path, mock_pdf_reader_class):
+        """ページ番号変換機能のテスト"""
+        # モックの設定
+        mock_path.return_value.exists.return_value = True
+        mock_reader = Mock()
+        mock_reader.pages = [Mock() for _ in range(50)]
+        mock_pdf_reader_class.return_value = mock_reader
+        
+        # オフセット5で初期化
+        parser = PDFParser("dummy.pdf", manual_offset=5)
+        
+        # 論理ページ1 → 物理ページ6
+        assert parser._convert_to_physical_page(1) == 6
+        # 論理ページ10 → 物理ページ15
+        assert parser._convert_to_physical_page(10) == 15
+        # 論理ページ50 → 物理ページ55
+        assert parser._convert_to_physical_page(50) == 55
+    
+    def test_extract_number_from_text(self):
+        """テキストからページ番号抽出のテスト"""
+        parser = PDFParser.__new__(PDFParser)
+        
+        # 単独の数字
+        assert parser._extract_number_from_text("123") == 123
+        assert parser._extract_number_from_text("  42  ") == 42
+        
+        # ハイフンで囲まれた数字
+        assert parser._extract_number_from_text("- 15 -") == 15
+        
+        # ページ/総ページ形式
+        assert parser._extract_number_from_text("25 / 100") == 25
+        
+        # 無効なパターン
+        assert parser._extract_number_from_text("Chapter 1") is None
+        assert parser._extract_number_from_text("123abc") is None
+        assert parser._extract_number_from_text("abc123def") is None
+        assert parser._extract_number_from_text("") is None
+        
+        # 範囲外の数字
+        assert parser._extract_number_from_text("0") is None
+        assert parser._extract_number_from_text("10001") is None
+    
+    @patch('pdf_podcast.pdf_parser.extract_pages')
+    @patch('pdf_podcast.pdf_parser.PdfReader')
+    @patch('pdf_podcast.pdf_parser.Path')
+    @pytest.mark.asyncio
+    async def test_detect_page_offset_success(self, mock_path, mock_pdf_reader_class, mock_extract_pages):
+        """ページオフセット検出成功のテスト"""
+        # モックの設定
+        mock_path.return_value.exists.return_value = True
+        mock_reader = Mock()
+        mock_reader.pages = [Mock() for _ in range(50)]
+        mock_pdf_reader_class.return_value = mock_reader
+        
+        # PDFページレイアウトのモック
+        mock_text_element = Mock(spec=LTTextContainer)
+        mock_text_element.get_text.return_value = "1"  # 1ページ目に"1"が記載
+        mock_text_element.y0 = 50  # フッター領域（下部）
+        
+        mock_page_layout = Mock()
+        mock_page_layout.height = 800
+        mock_page_layout.__iter__ = lambda self: iter([mock_text_element])
+        
+        mock_extract_pages.return_value = [mock_page_layout]
+        
+        parser = PDFParser("dummy.pdf")
+        
+        # ページ1（物理）に"1"（論理）が記載されている場合、オフセットは0
+        offset = await parser._detect_page_offset()
+        assert offset == 0
+        assert parser._offset_detected == True
+    
+    @patch('pdf_podcast.pdf_parser.extract_pages')
+    @patch('pdf_podcast.pdf_parser.PdfReader')
+    @patch('pdf_podcast.pdf_parser.Path')
+    @pytest.mark.asyncio
+    async def test_detect_page_offset_with_offset(self, mock_path, mock_pdf_reader_class, mock_extract_pages):
+        """前付けありPDFでのオフセット検出テスト"""
+        # モックの設定
+        mock_path.return_value.exists.return_value = True
+        mock_reader = Mock()
+        mock_reader.pages = [Mock() for _ in range(50)]
+        mock_pdf_reader_class.return_value = mock_reader
+        
+        # 物理ページ6に論理ページ"1"が記載されている場合
+        mock_text_elements = []
+        for i in range(20):  # 最初の20ページをチェック
+            mock_text_element = Mock(spec=LTTextContainer)
+            if i == 5:  # 物理ページ6（0ベースで5）
+                mock_text_element.get_text.return_value = "1"  # 論理ページ1
+            elif i == 6:  # 物理ページ7（0ベースで6）
+                mock_text_element.get_text.return_value = "2"  # 論理ページ2
+            else:
+                mock_text_element.get_text.return_value = "header text"  # その他
+            mock_text_element.y0 = 50  # フッター領域
+            mock_text_elements.append(mock_text_element)
+        
+        def mock_extract_pages_func(*args, **kwargs):
+            page_numbers = kwargs.get('page_numbers', [0])
+            page_idx = page_numbers[0]
+            if page_idx < len(mock_text_elements):
+                mock_page_layout = Mock()
+                mock_page_layout.height = 800
+                mock_page_layout.__iter__ = lambda self: iter([mock_text_elements[page_idx]])
+                return [mock_page_layout]
+            return []
+        
+        mock_extract_pages.side_effect = mock_extract_pages_func
+        
+        parser = PDFParser("dummy.pdf")
+        
+        # 物理ページ6に論理ページ1が記載 → オフセット = 6 - 1 = 5
+        offset = await parser._detect_page_offset()
+        assert offset == 5
+        assert parser._offset_detected == True
+    
+    @patch('pdf_podcast.pdf_parser.extract_pages')
+    @patch('pdf_podcast.pdf_parser.PdfReader')
+    @patch('pdf_podcast.pdf_parser.Path')
+    @pytest.mark.asyncio
+    async def test_detect_page_offset_failure(self, mock_path, mock_pdf_reader_class, mock_extract_pages):
+        """ページオフセット検出失敗のテスト"""
+        # モックの設定
+        mock_path.return_value.exists.return_value = True
+        mock_reader = Mock()
+        mock_reader.pages = [Mock() for _ in range(50)]
+        mock_pdf_reader_class.return_value = mock_reader
+        
+        # ページ番号が見つからない場合
+        mock_extract_pages.side_effect = Exception("PDF processing error")
+        
+        parser = PDFParser("dummy.pdf")
+        
+        # エラー時はオフセット0でフォールバック
+        offset = await parser._detect_page_offset()
+        assert offset == 0
+        assert parser._offset_detected == True
+    
+    @patch('pdf_podcast.pdf_parser.PdfReader')
+    @patch('pdf_podcast.pdf_parser.Path')
+    @pytest.mark.asyncio
+    async def test_extract_chapters_with_offset(self, mock_path, mock_pdf_reader_class):
+        """オフセットありでの章抽出テスト"""
+        # モックの設定
+        mock_path.return_value.exists.return_value = True
+        mock_reader = Mock()
+        mock_reader.pages = [Mock() for _ in range(50)]
+        mock_pdf_reader_class.return_value = mock_reader
+        
+        # オフセット5で初期化
+        parser = PDFParser("dummy.pdf", manual_offset=5)
+        parser.total_pages = 50
+        
+        # LLMレスポンスのモック（論理ページ番号）
+        mock_llm_response = [
+            {"title": "第1章", "start_page": 1, "end_page": 10},  # 論理ページ
+            {"title": "第2章", "start_page": 11, "end_page": 20},  # 論理ページ
+        ]
+        
+        extracted_pages = []
+        def mock_extract_text(start, end):
+            extracted_pages.append((start, end))
+            return f"Text from page {start} to {end}"
+        
+        with patch.object(parser, '_get_sample_text', return_value="sample text"):
+            with patch.object(parser, '_detect_chapters_with_llm', return_value=mock_llm_response):
+                with patch.object(parser, 'extract_text', side_effect=mock_extract_text):
+                    chapters = await parser.extract_chapters()
+        
+        # 章データの確認
+        assert len(chapters) == 2
+        assert chapters[0].title == "第1章"
+        assert chapters[0].start_page == 1  # manifestには論理ページを保存
+        assert chapters[0].end_page == 10
+        
+        # 実際にextract_textに渡されたページは物理ページ番号
+        assert extracted_pages[0] == (6, 15)  # 論理1-10 → 物理6-15
+        assert extracted_pages[1] == (16, 25)  # 論理11-20 → 物理16-25
