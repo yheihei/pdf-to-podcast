@@ -146,7 +146,7 @@ class ManifestManager:
         output_dir: str,
         chapters: List[ChapterInfo],
         model: str = "gemini-2.5-pro-preview-tts",
-        voice: str = "Kore",
+        voice: str = "Leda",
         max_concurrency: int = 4,
         skip_existing: bool = False,
         bgm_path: Optional[str] = None
@@ -191,7 +191,7 @@ class ManifestManager:
         output_dir: str,
         sections: List[SectionInfo],
         model: str = "gemini-2.5-pro-preview-tts",
-        voice: str = "Kore",
+        voice: str = "Leda",
         max_concurrency: int = 1,
         skip_existing: bool = False,
         bgm_path: Optional[str] = None

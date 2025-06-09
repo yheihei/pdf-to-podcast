@@ -209,7 +209,7 @@ class TestTTSChunkProcessor:
         with patch.object(self.processor, 'merge_audio_chunks', return_value=b"merged_audio"):
             result = await self.processor.process_large_dialogue(
                 dialogue_lines=large_dialogue,
-                voice_host="Kore",
+                voice_host="Leda",
                 voice_guest="Puck"
             )
         

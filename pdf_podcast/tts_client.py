@@ -23,14 +23,15 @@ logger = logging.getLogger(__name__)
 class VoiceConfig:
     """Configuration for a speaker voice."""
     speaker_id: str  # "Host" or "Guest"
-    voice_name: str  # e.g., "Kore", "Puck"
+    voice_name: str  # e.g., "Leda", "Puck"
 
 
 class TTSClient:
     """Generates single-speaker audio from lecture scripts using Gemini TTS API."""
     
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-pro-preview-tts", 
-                 sample_rate: int = 22050, channels: int = 1, bitrate: str = "128k"):
+                 sample_rate: int = 22050, channels: int = 1, bitrate: str = "128k",
+                 temperature: float = 1.0, style_instructions: str = None):
         """Initialize TTS client with Gemini API configuration.
         
         Args:
@@ -39,17 +40,21 @@ class TTSClient:
             sample_rate: Audio sample rate in Hz
             channels: Number of audio channels (1=mono, 2=stereo)
             bitrate: Output MP3 bitrate
+            temperature: TTS temperature for voice variability (0.1-1.0)
+            style_instructions: Style instructions for voice (e.g., 'read in anime-style voice')
         """
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
         self.sample_rate = sample_rate
         self.channels = channels
         self.bitrate = bitrate
+        self.temperature = temperature
+        self.style_instructions = style_instructions
         
     def generate_audio(
         self,
         lecture_content: str,
-        voice: str = "Kore",
+        voice: str = "Leda",
         output_path: Optional[Path] = None
     ) -> bytes:
         """Generate single-speaker audio from lecture content.
@@ -69,10 +74,19 @@ class TTSClient:
             logger.warning(f"Large lecture content ({len(lecture_content)} chars). This may cause TTS timeouts.")
         
         try:
+            # Prepare content with style instructions embedded
+            if self.style_instructions:
+                # Embed style instructions directly in the content as natural language prompt
+                content_with_style = f"{self.style_instructions}: {lecture_content}"
+                logger.info(f"Using style instructions: {self.style_instructions}")
+            else:
+                content_with_style = lecture_content
+                logger.info("No style instructions provided")
+            
             # Generate audio using Gemini TTS with single speaker
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=lecture_content,
+                contents=content_with_style,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
@@ -82,7 +96,7 @@ class TTSClient:
                             )
                         )
                     ),
-                    temperature=0.7,
+                    temperature=self.temperature,
                 )
             )
             
@@ -166,7 +180,7 @@ class TTSClient:
         self,
         scripts: Dict[str, str],
         output_dir: Path,
-        voice: str = "Kore"
+        voice: str = "Leda"
     ) -> Dict[str, Path]:
         """Generate audio files for multiple chapter scripts.
         
@@ -209,7 +223,7 @@ class TTSClient:
         self,
         section_scripts: Dict[str, 'SectionScript'],
         output_dir: Path,
-        voice: str = "Kore"
+        voice: str = "Leda"
     ) -> Dict[str, Path]:
         """Generate audio files for multiple section scripts.
         
@@ -251,7 +265,7 @@ class TTSClient:
     async def generate_audio_with_retry(
         self,
         lecture_content: str,
-        voice: str = "Kore",
+        voice: str = "Leda",
         output_path: Optional[Path] = None,
         max_retries: int = 3  # Reduced retries to avoid long wait times
     ) -> Optional[bytes]:
@@ -317,7 +331,7 @@ class TTSClient:
         self,
         scripts: Dict[str, str],
         output_dir: Path,
-        voice: str = "Kore",
+        voice: str = "Leda",
         max_concurrency: int = 1,  # Fixed to 1 for Free tier rate limit compliance
         skip_existing: bool = False,
         max_retries: int = 3
@@ -408,7 +422,7 @@ class TTSClient:
         self,
         section_scripts: Dict[str, 'SectionScript'],
         output_dir: Path,
-        voice: str = "Kore",
+        voice: str = "Leda",
         max_concurrency: int = 1,  # Fixed to 1 for Free tier rate limit compliance
         skip_existing: bool = False,
         max_retries: int = 3

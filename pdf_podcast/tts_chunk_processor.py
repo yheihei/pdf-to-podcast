@@ -154,7 +154,7 @@ class TTSChunkProcessor:
     async def process_chunks_sequentially(
         self, 
         chunks: List[List[Dict[str, str]]],
-        voice_host: str = "Kore",
+        voice_host: str = "Leda",
         voice_guest: str = "Puck",
         timeout: int = 180
     ) -> List[bytes]:
@@ -320,7 +320,7 @@ class TTSChunkProcessor:
     async def process_large_dialogue(
         self,
         dialogue_lines: List[Dict[str, str]],
-        voice_host: str = "Kore",
+        voice_host: str = "Leda",
         voice_guest: str = "Puck",
         output_path: Optional[Path] = None,
         timeout: int = 180
