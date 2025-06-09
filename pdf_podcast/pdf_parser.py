@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -43,7 +44,7 @@ class Chapter:
 class PDFParser:
     """PDFファイルから章を検出し、テキストを抽出するクラス"""
     
-    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.5-flash-preview-05-20", api_key: Optional[str] = None):
+    def __init__(self, pdf_path: str, gemini_model: str = "gemini-2.5-flash-preview-05-20", api_key: Optional[str] = None, manual_offset: Optional[int] = None):
         """
         PDFパーサーを初期化
         
@@ -51,6 +52,7 @@ class PDFParser:
             pdf_path: 解析するPDFファイルのパス
             gemini_model: 使用するGeminiモデル
             api_key: Google API キー（省略時は環境変数から取得）
+            manual_offset: 手動ページオフセット（論理ページ番号 + オフセット = 物理ページ番号）
         """
         self.pdf_path = Path(pdf_path)
         if not self.pdf_path.exists():
@@ -72,6 +74,16 @@ class PDFParser:
         rate_limit_config = RateLimitConfig(rpm_limit=15)  # Free tier
         self.rate_limiter = GeminiRateLimiter(rate_limit_config)
         
+        # ページオフセットの設定
+        if manual_offset is not None:
+            self._page_offset = manual_offset
+            self._offset_detected = True
+            logger.info(f"Manual page offset set: {manual_offset}")
+        else:
+            # 自動検出（非同期なので後で実行）
+            self._page_offset = 0  # 初期値
+            self._offset_detected = False
+        
     async def extract_chapters(self) -> List[Chapter]:
         """
         LLMを使用して章を検出し、各章のテキストを抽出
@@ -80,6 +92,10 @@ class PDFParser:
             Chapter オブジェクトのリスト
         """
         logger.info(f"Extracting chapters from {self.pdf_path}")
+        
+        # ページオフセットを検出（自動検出の場合のみ）
+        if not self._offset_detected:
+            await self._detect_page_offset()
         
         # PDFから章構造を検出するためのサンプルテキストを取得
         sample_text = self._get_sample_text()
@@ -90,15 +106,21 @@ class PDFParser:
         # 各章のテキストを抽出
         chapters = []
         for ch in chapter_info:
-            text = self.extract_text(ch["start_page"], ch["end_page"])
+            # LLMから返された論理ページ番号を物理ページ番号に変換
+            physical_start = self._convert_to_physical_page(ch["start_page"])
+            physical_end = self._convert_to_physical_page(ch["end_page"])
+            
+            logger.debug(f"Converting chapter '{ch['title']}': logical pages {ch['start_page']}-{ch['end_page']} -> physical pages {physical_start}-{physical_end}")
+            
+            text = self.extract_text(physical_start, physical_end)
             chapter = Chapter(
                 title=ch["title"],
-                start_page=ch["start_page"],
-                end_page=ch["end_page"],
+                start_page=ch["start_page"],  # manifestには論理ページ番号を保存
+                end_page=ch["end_page"],      # manifestには論理ページ番号を保存
                 text=text
             )
             chapters.append(chapter)
-            logger.info(f"Extracted chapter: {chapter.title} (pages {chapter.start_page}-{chapter.end_page})")
+            logger.info(f"Extracted chapter: {chapter.title} (logical pages {chapter.start_page}-{chapter.end_page}, physical pages {physical_start}-{physical_end})")
         
         return chapters
     
@@ -111,6 +133,10 @@ class PDFParser:
         """
         logger.info(f"Extracting sections from {self.pdf_path}")
         
+        # ページオフセットを検出（自動検出の場合のみ）
+        if not self._offset_detected:
+            await self._detect_page_offset()
+        
         # PDFから中項目構造を検出するためのサンプルテキストを取得
         sample_text = self._get_sample_text()
         
@@ -120,17 +146,23 @@ class PDFParser:
         # 各中項目のテキストを抽出
         sections = []
         for sec in section_info:
-            text = self.extract_text(sec["start_page"], sec["end_page"])
+            # LLMから返された論理ページ番号を物理ページ番号に変換
+            physical_start = self._convert_to_physical_page(sec["start_page"])
+            physical_end = self._convert_to_physical_page(sec["end_page"])
+            
+            logger.debug(f"Converting section '{sec['title']}': logical pages {sec['start_page']}-{sec['end_page']} -> physical pages {physical_start}-{physical_end}")
+            
+            text = self.extract_text(physical_start, physical_end)
             section = Section(
                 title=sec["title"],
                 section_number=sec.get("section_number", ""),
-                start_page=sec["start_page"],
-                end_page=sec["end_page"],
+                start_page=sec["start_page"],  # manifestには論理ページ番号を保存
+                end_page=sec["end_page"],      # manifestには論理ページ番号を保存
                 text=text,
                 parent_chapter=sec.get("parent_chapter", "")
             )
             sections.append(section)
-            logger.info(f"Extracted section: {section.section_number} {section.title} (pages {section.start_page}-{section.end_page})")
+            logger.info(f"Extracted section: {section.section_number} {section.title} (logical pages {section.start_page}-{section.end_page}, physical pages {physical_start}-{physical_end})")
         
         return sections
     
@@ -366,3 +398,164 @@ PDFテキスト：
                     "end_page": self.total_pages,
                     "parent_chapter": "全体"
                 }]
+    
+    @property
+    def page_offset(self) -> int:
+        """検出されたページオフセット値を返す"""
+        return getattr(self, '_page_offset', 0)
+    
+    def _convert_to_physical_page(self, logical_page: int) -> int:
+        """
+        論理ページ番号を物理ページ番号に変換
+        
+        Args:
+            logical_page: 論理ページ番号（本の中でのページ番号）
+            
+        Returns:
+            物理ページ番号（PDFファイル内の実際のページ番号）
+        """
+        return logical_page + self.page_offset
+    
+    async def _detect_page_offset(self) -> int:
+        """
+        PDFの物理ページ番号と論理ページ番号のオフセットを検出
+        
+        実装方針:
+        - 最初の10-20ページを対象
+        - pdfminerのextract_pagesでページごとのテキスト要素を取得
+        - 正規表現でページ番号パターンを検出（単独の数字、ページフッター/ヘッダー内の数字）
+        - 複数ページで一貫性を確認してオフセットを算出
+        - 検出失敗時は0を返す（フォールバック）
+        
+        Returns:
+            オフセット値（物理ページ番号 = 論理ページ番号 + オフセット）
+        """
+        if self._offset_detected:
+            return self._page_offset
+        
+        try:
+            logger.info("Detecting page number offset...")
+            
+            # 検査対象のページ数（最大20ページ、総ページ数が少ない場合はそれに合わせる）
+            max_check_pages = min(20, self.total_pages)
+            offsets = []
+            
+            for page_idx in range(max_check_pages):
+                try:
+                    # ページからテキスト要素を抽出
+                    page_layout = list(extract_pages(str(self.pdf_path), page_numbers=[page_idx], maxpages=1))
+                    if not page_layout:
+                        continue
+                    
+                    # ページ上部・下部のテキスト要素からページ番号を探す
+                    page_number = self._extract_page_number_from_layout(page_layout[0], page_idx + 1)
+                    
+                    if page_number is not None:
+                        # オフセット計算: 物理ページ番号 = 論理ページ番号 + オフセット
+                        # オフセット = 物理ページ番号 - 論理ページ番号
+                        calculated_offset = (page_idx + 1) - page_number
+                        offsets.append(calculated_offset)
+                        logger.debug(f"Page {page_idx + 1}: found logical page {page_number}, offset={calculated_offset}")
+                
+                except Exception as e:
+                    logger.debug(f"Failed to process page {page_idx + 1}: {e}")
+                    continue
+            
+            # 一貫したオフセットを検出
+            if offsets:
+                # 最も頻繁に現れるオフセット値を選択
+                from collections import Counter
+                offset_counts = Counter(offsets)
+                detected_offset = offset_counts.most_common(1)[0][0]
+                
+                # 一貫性を確認（同じオフセットが少なくとも2回以上出現）
+                if offset_counts[detected_offset] >= 2:
+                    self._page_offset = detected_offset
+                    self._offset_detected = True
+                    logger.info(f"Page offset detected: {detected_offset} (logical page = physical page - {detected_offset})")
+                    return detected_offset
+                else:
+                    logger.warning(f"Inconsistent page numbering detected. Using default offset 0.")
+            else:
+                logger.warning("No page numbers found. Using default offset 0.")
+            
+            # フォールバック
+            self._page_offset = 0
+            self._offset_detected = True
+            return 0
+            
+        except Exception as e:
+            logger.error(f"Failed to detect page offset: {e}")
+            self._page_offset = 0
+            self._offset_detected = True
+            return 0
+    
+    def _extract_page_number_from_layout(self, page_layout, physical_page_num: int) -> Optional[int]:
+        """
+        ページレイアウトからページ番号を抽出
+        
+        Args:
+            page_layout: PDFページのレイアウト情報
+            physical_page_num: 物理ページ番号（デバッグ用）
+            
+        Returns:
+            検出されたページ番号（論理ページ番号）、見つからない場合はNone
+        """
+        try:
+            # ページの高さを取得
+            page_height = page_layout.height if hasattr(page_layout, 'height') else 800
+            
+            # ヘッダー・フッター領域の定義（上下10%の領域）
+            header_threshold = page_height * 0.9
+            footer_threshold = page_height * 0.1
+            
+            for element in page_layout:
+                if isinstance(element, LTTextContainer):
+                    text = element.get_text().strip()
+                    y_position = element.y0
+                    
+                    # ヘッダーまたはフッター領域のテキストをチェック
+                    if y_position >= header_threshold or y_position <= footer_threshold:
+                        page_number = self._extract_number_from_text(text)
+                        if page_number is not None:
+                            # 妥当性チェック（物理ページ番号から大きく離れていない）
+                            if abs(page_number - physical_page_num) <= 20:
+                                return page_number
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error extracting page number from layout: {e}")
+            return None
+    
+    def _extract_number_from_text(self, text: str) -> Optional[int]:
+        """
+        テキストからページ番号として妥当な数字を抽出
+        
+        Args:
+            text: 対象テキスト
+            
+        Returns:
+            抽出されたページ番号、見つからない場合はNone
+        """
+        try:
+            # 単独の数字パターンを検索（周囲に文字がないもの）
+            patterns = [
+                r'^\s*(\d+)\s*$',  # 単独の数字
+                r'^\s*-\s*(\d+)\s*-\s*$',  # -123- 形式
+                r'^\s*(\d+)\s*/\s*\d+\s*$',  # 123/456 形式（ページ/総ページ）
+                r'^\s*(\d+)\s*$',  # 前後に空白がある数字
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text)
+                if match:
+                    number = int(match.group(1))
+                    # 妥当な範囲の数字かチェック（1以上10000以下）
+                    if 1 <= number <= 10000:
+                        return number
+            
+            return None
+            
+        except (ValueError, AttributeError):
+            return None
