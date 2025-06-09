@@ -929,7 +929,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   pdf_podcast --input book.pdf --output-dir ./podcast
   pdf_podcast --input book.pdf --output-dir ./podcast --max-concurrency 2 --skip-existing
-  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice Leda
+  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice Zephyr
         """
     )
     
@@ -968,8 +968,8 @@ Examples:
     parser.add_argument(
         "--voice",
         type=str,
-        default="Leda",
-        help="Voice name for the lecturer (default: Leda)"
+        default="Zephyr",
+        help="Voice name for the lecturer (default: Zephyr)"
     )
     
     parser.add_argument(
@@ -982,7 +982,7 @@ Examples:
     parser.add_argument(
         "--style-instructions",
         type=str,
-        default="reads aloud in a high school girl, vivacious, fresh, lively, fast-talking and smooth, Japanese anime-style voice.",
+        default="vivacious, fresh, lively, fast-talking and smooth, sexy.",
         help="Style instructions for TTS voice (default: anime-style high school girl voice)"
     )
     

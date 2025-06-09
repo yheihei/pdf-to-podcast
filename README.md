@@ -83,7 +83,7 @@ python -m pdf_podcast --scripts-to-audio ./scripts/document --output-dir ./outpu
 python -m pdf_podcast \
   --input document.pdf \
   --output-dir ./output \
-  --voice Leda \
+  --voice Zephyr \
   --quality standard \
   --bgm background_music.mp3 \
   --skip-existing
@@ -129,7 +129,7 @@ python -m pdf_podcast --input document.pdf --output-dir ./output --page-offset 5
 | `--input` | 入力PDFファイルのパス | 通常モードで必須 |
 | `--output-dir` | 出力ディレクトリ | 通常モードで必須 |
 | `--scripts-to-audio` | スクリプトディレクトリから音声のみ生成 | なし |
-| `--voice` | 講師の音声 | Leda |
+| `--voice` | 講師の音声 | Zephyr |
 | `--quality` | 音声品質プリセット（high/standard/compact） | standard |
 | `--bitrate` | 音声のビットレート（qualityより優先） | 128k |
 | `--bgm` | BGM音楽ファイルのパス | なし |

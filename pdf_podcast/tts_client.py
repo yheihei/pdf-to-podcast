@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class VoiceConfig:
     """Configuration for a speaker voice."""
     speaker_id: str  # "Host" or "Guest"
-    voice_name: str  # e.g., "Leda", "Puck"
+    voice_name: str  # e.g., "Zephyr", "Puck"
 
 
 class TTSClient:
@@ -54,7 +54,7 @@ class TTSClient:
     def generate_audio(
         self,
         lecture_content: str,
-        voice: str = "Leda",
+        voice: str = "Zephyr",
         output_path: Optional[Path] = None
     ) -> bytes:
         """Generate single-speaker audio from lecture content.
@@ -180,7 +180,7 @@ class TTSClient:
         self,
         scripts: Dict[str, str],
         output_dir: Path,
-        voice: str = "Leda"
+        voice: str = "Zephyr"
     ) -> Dict[str, Path]:
         """Generate audio files for multiple chapter scripts.
         
@@ -223,7 +223,7 @@ class TTSClient:
         self,
         section_scripts: Dict[str, 'SectionScript'],
         output_dir: Path,
-        voice: str = "Leda"
+        voice: str = "Zephyr"
     ) -> Dict[str, Path]:
         """Generate audio files for multiple section scripts.
         
@@ -265,7 +265,7 @@ class TTSClient:
     async def generate_audio_with_retry(
         self,
         lecture_content: str,
-        voice: str = "Leda",
+        voice: str = "Zephyr",
         output_path: Optional[Path] = None,
         max_retries: int = 3  # Reduced retries to avoid long wait times
     ) -> Optional[bytes]:
@@ -331,7 +331,7 @@ class TTSClient:
         self,
         scripts: Dict[str, str],
         output_dir: Path,
-        voice: str = "Leda",
+        voice: str = "Zephyr",
         max_concurrency: int = 1,  # Fixed to 1 for Free tier rate limit compliance
         skip_existing: bool = False,
         max_retries: int = 3
@@ -422,7 +422,7 @@ class TTSClient:
         self,
         section_scripts: Dict[str, 'SectionScript'],
         output_dir: Path,
-        voice: str = "Leda",
+        voice: str = "Zephyr",
         max_concurrency: int = 1,  # Fixed to 1 for Free tier rate limit compliance
         skip_existing: bool = False,
         max_retries: int = 3

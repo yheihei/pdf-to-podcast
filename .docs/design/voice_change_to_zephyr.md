@@ -1,13 +1,13 @@
-# 実装内容: デフォルトVoiceをLedaに変更し、温かみのある話し方にする
+# 実装内容: デフォルトVoiceをZephyrに変更し、温かみのある話し方にする
 
 ## 実装概要
-PDF Podcastツールのデフォルト音声を「Leda」から「Leda」に変更し、より温かみのある話し方になるようパラメータを調整しました。
+PDF Podcastツールのデフォルト音声を「Zephyr」から「Zephyr」に変更し、より温かみのある話し方になるようパラメータを調整しました。
 
 ## 変更内容
 
 ### 1. デフォルトVoiceの変更
 **ファイル**: `pdf_podcast/__main__.py`
-- L964: デフォルトボイスを`"Leda"`から`"Leda"`に変更
+- L964: デフォルトボイスを`"Zephyr"`から`"Zephyr"`に変更
 - ヘルプメッセージも更新
 
 ### 2. 音声パラメータの追加
@@ -52,12 +52,12 @@ PDF Podcastツールのデフォルト音声を「Leda」から「Leda」に変�
 ## 使用例
 
 ```bash
-# デフォルト設定で実行（Leda音声、temperature=0.9）
+# デフォルト設定で実行（Zephyr音声、temperature=0.9）
 python -m pdf_podcast --input document.pdf --output-dir ./output
 
 # カスタム設定で実行
 python -m pdf_podcast --input document.pdf --output-dir ./output \
-  --voice "Leda" \
+  --voice "Zephyr" \
   --temperature 0.8 \
   --speaking-rate 0.9
 ```
