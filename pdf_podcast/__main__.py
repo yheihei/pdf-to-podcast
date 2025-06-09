@@ -38,11 +38,27 @@ class PodcastGenerator:
             args: Parsed command line arguments
         """
         self.args = args
-        self.output_dir = Path(args.output_dir)
-        self.manifest_path = self.output_dir / "manifest.json"
+        # Handle output_dir for scripts-to-audio mode
+        if hasattr(args, 'scripts_to_audio') and args.scripts_to_audio:
+            # In scripts-to-audio mode, output_dir might be None
+            self.output_dir = Path(args.output_dir) if args.output_dir else None
+            self.manifest_path = self.output_dir / "manifest.json" if self.output_dir else None
+        else:
+            self.output_dir = Path(args.output_dir)
+            self.manifest_path = self.output_dir / "manifest.json"
         
         # Setup logging
-        self.log_dir = self.output_dir / "logs"
+        if hasattr(args, 'scripts_to_audio') and args.scripts_to_audio:
+            # In scripts-to-audio mode, place logs in a temp directory or scripts directory parent
+            scripts_dir = Path(args.scripts_to_audio)
+            if scripts_dir.parent.name == "scripts":
+                # Standard structure: use output base for logs
+                self.log_dir = scripts_dir.parent.parent / "logs"
+            else:
+                # Non-standard structure: use scripts directory parent
+                self.log_dir = scripts_dir.parent / "logs"
+        else:
+            self.log_dir = self.output_dir / "logs"
         self.podcast_logger = setup_logger(log_dir=self.log_dir, verbose=args.verbose)
         
         # Initialize components
@@ -52,7 +68,8 @@ class PodcastGenerator:
         self.script_builder = None
         self.tts_client = None
         self.audio_mixer = None
-        self.manifest_manager = ManifestManager(self.manifest_path)
+        # Initialize manifest manager only if manifest_path is available
+        self.manifest_manager = ManifestManager(self.manifest_path) if self.manifest_path else None
         
         # Apply quality settings
         self._apply_quality_settings()
@@ -158,9 +175,178 @@ class PodcastGenerator:
     def _signal_handler(self, signum, frame):
         """Handle interrupt signal for graceful shutdown."""
         self.podcast_logger.print_warning("Interrupt received. Saving progress...")
-        if hasattr(self, 'manifest_manager'):
+        if hasattr(self, 'manifest_manager') and self.manifest_manager:
             self.manifest_manager.save()
         sys.exit(0)
+    
+    def validate_scripts_directory(self, scripts_dir_path: str) -> Path:
+        """指定されたスクリプトディレクトリの存在を確認
+        
+        Args:
+            scripts_dir_path: スクリプトディレクトリのパス
+            
+        Returns:
+            検証済みのPathオブジェクト
+            
+        Raises:
+            ValueError: ディレクトリが存在しない、またはディレクトリでない場合
+        """
+        scripts_dir = Path(scripts_dir_path)
+        if not scripts_dir.exists():
+            raise ValueError(f"スクリプトディレクトリが見つかりません: {scripts_dir_path}")
+        if not scripts_dir.is_dir():
+            raise ValueError(f"指定されたパスはディレクトリではありません: {scripts_dir_path}")
+        return scripts_dir
+    
+    def get_missing_audio_files(self, scripts_dir: Path, audio_dir: Path) -> list[Path]:
+        """音声が未生成のスクリプトファイルを取得
+        
+        Args:
+            scripts_dir: スクリプトディレクトリのパス
+            audio_dir: 音声ディレクトリのパス
+            
+        Returns:
+            音声未生成のスクリプトファイルのリスト
+        """
+        script_files = {f.stem: f for f in scripts_dir.glob("*.txt")}
+        audio_files = {f.stem for f in audio_dir.glob("*.mp3")}
+        
+        missing = []
+        for stem, script_path in script_files.items():
+            if stem not in audio_files:
+                missing.append(script_path)
+        
+        return missing
+    
+    def handle_rate_limit_error(self, scripts_dir: str, processed: int, total: int):
+        """429エラー時の処理停止とガイダンス表示
+        
+        Args:
+            scripts_dir: スクリプトディレクトリのパス
+            processed: 処理済みファイル数
+            total: 総ファイル数
+        """
+        print(f"❌ レート制限エラー (429) が発生しました\n")
+        print(f"API制限: Free Tierは1分間に3リクエストまで")
+        print(f"処理状況:")
+        print(f"- 処理済み: {processed}/{total} ファイル ({processed/total*100:.1f}%)")
+        print(f"- 残り: {total-processed} ファイル\n")
+        print(f"時間をおいて以下のコマンドで処理を再開してください:")
+        print(f"python -m pdf_podcast --scripts-to-audio {scripts_dir}\n")
+        print(f"推奨待機時間: 2-5分")
+        print(f"※ 既存の音声ファイルは自動でスキップされます")
+        sys.exit(1)
+    
+    async def run_scripts_to_audio(self) -> int:
+        """Run scripts-to-audio mode.
+        
+        Returns:
+            Exit code (0 for success, non-zero for error)
+        """
+        try:
+            scripts_dir = self.validate_scripts_directory(self.args.scripts_to_audio)
+            
+            # Determine audio directory
+            if hasattr(self.args, 'output_dir') and self.args.output_dir:
+                # If output-dir is specified, use it as base
+                output_base = Path(self.args.output_dir)
+                audio_dir = output_base / "audio" / scripts_dir.name
+            else:
+                # Try to infer from scripts directory structure
+                # Assume structure: .../output/scripts/dirname -> .../output/audio/dirname
+                scripts_parent = scripts_dir.parent
+                if scripts_parent.name == "scripts":
+                    output_base = scripts_parent.parent
+                    audio_dir = output_base / "audio" / scripts_dir.name
+                else:
+                    # Default: place audio directory as sibling to scripts directory
+                    audio_dir = scripts_parent / "audio" / scripts_dir.name
+            
+            # Ensure audio directory exists
+            audio_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Print header
+            self.podcast_logger.print_header(
+                "Scripts-to-Audio モード",
+                f"スクリプトから音声のみを生成"
+            )
+            
+            # Print progress information
+            script_files = list(scripts_dir.glob("*.txt"))
+            audio_files = list(audio_dir.glob("*.mp3"))
+            missing_audio_files = self.get_missing_audio_files(scripts_dir, audio_dir)
+            
+            self.podcast_logger.print_info(f"スクリプトディレクトリ: {scripts_dir}")
+            self.podcast_logger.print_info(f"音声ディレクトリ: {audio_dir}")
+            self.podcast_logger.print_info(f"- スクリプト総数: {len(script_files)}")
+            self.podcast_logger.print_info(f"- 生成済み音声: {len(audio_files)}")
+            self.podcast_logger.print_info(f"- 未生成音声: {len(missing_audio_files)}")
+            self.podcast_logger.print_info(f"- 処理対象: {len(missing_audio_files)}ファイル")
+            
+            if not missing_audio_files:
+                self.podcast_logger.print_success("すべてのスクリプトに対応する音声ファイルが既に存在します。")
+                return 0
+            
+            # Initialize TTS client
+            self.tts_client = TTSClient(
+                api_key=self.api_key,
+                model_name=self.model_config.tts_model,
+                sample_rate=self.quality_settings["sample_rate"],
+                channels=self.quality_settings["channels"],
+                bitrate=self.args.bitrate
+            )
+            
+            # Generate audio for missing files only
+            self.podcast_logger.start_progress()
+            task_id = self.podcast_logger.add_task(f"音声生成中...", total=len(missing_audio_files))
+            
+            processed = 0
+            for script_file in missing_audio_files:
+                try:
+                    # Read script content
+                    with open(script_file, 'r', encoding='utf-8') as f:
+                        script_content = f.read()
+                    
+                    # Generate audio
+                    audio_filename = script_file.stem + ".mp3"
+                    audio_path = audio_dir / audio_filename
+                    
+                    self.tts_client.generate_audio(
+                        lecture_content=script_content,
+                        voice=self.args.voice,
+                        output_path=audio_path
+                    )
+                    
+                    processed += 1
+                    self.podcast_logger.update_task(task_id, advance=1)
+                    
+                except Exception as e:
+                    if "429" in str(e) or "rate limit" in str(e).lower():
+                        # Handle rate limit error
+                        self.handle_rate_limit_error(self.args.scripts_to_audio, processed, len(missing_audio_files))
+                    else:
+                        self.podcast_logger.print_error(f"Failed to generate audio for {script_file.name}: {str(e)}")
+                        continue
+            
+            self.podcast_logger.complete_task(task_id, f"Generated {processed} audio files")
+            self.podcast_logger.stop_progress()
+            
+            # Print completion summary
+            self.podcast_logger.print_success(f"Scripts-to-Audio 処理が完了しました！")
+            self.podcast_logger.print_info(f"生成された音声ファイル: {processed}個")
+            self.podcast_logger.print_info(f"音声ファイル保存先: {audio_dir}")
+            
+            return 0
+            
+        except ValueError as e:
+            self.podcast_logger.print_error(str(e))
+            return 1
+        except KeyboardInterrupt:
+            self.podcast_logger.print_warning("Process interrupted by user")
+            return 1
+        except Exception as e:
+            self.podcast_logger.print_error(f"Unexpected error: {str(e)}", e)
+            return 1
     
     async def run(self) -> int:
         """Run the podcast generation process.
@@ -168,6 +354,10 @@ class PodcastGenerator:
         Returns:
             Exit code (0 for success, non-zero for error)
         """
+        # Check if scripts-to-audio mode
+        if hasattr(self.args, 'scripts_to_audio') and self.args.scripts_to_audio:
+            return await self.run_scripts_to_audio()
+        
         try:
             # Generate directory name based on PDF filename
             pdf_filename = Path(self.args.input).name
@@ -729,19 +919,17 @@ Examples:
         """
     )
     
-    # Required arguments
+    # Required arguments (conditionally)
     parser.add_argument(
         "--input",
         type=str,
-        required=True,
-        help="Path to input PDF file"
+        help="Path to input PDF file (required in normal mode)"
     )
     
     parser.add_argument(
         "--output-dir",
         type=str,
-        required=True,
-        help="Output directory for generated files"
+        help="Output directory for generated files (required in normal mode, optional in scripts-to-audio mode)"
     )
     
     # Model configuration arguments
@@ -810,6 +998,13 @@ Examples:
         help="Enable verbose logging"
     )
     
+    parser.add_argument(
+        "--scripts-to-audio",
+        type=str,
+        metavar="SCRIPTS_DIR",
+        help="指定されたスクリプトディレクトリから音声のみを生成（PDF解析とスクリプト生成をスキップ）"
+    )
+    
     return parser
 
 
@@ -822,13 +1017,37 @@ def main() -> int:
     parser = create_parser()
     args = parser.parse_args()
     
-    # Validate input file
-    if not Path(args.input).exists():
-        print(f"Error: Input file not found: {args.input}")
-        return 1
-    
-    # Create output directory
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    # Check if scripts-to-audio mode
+    if hasattr(args, 'scripts_to_audio') and args.scripts_to_audio:
+        # Validate scripts directory
+        if not Path(args.scripts_to_audio).exists():
+            print(f"Error: Scripts directory not found: {args.scripts_to_audio}")
+            return 1
+        if not Path(args.scripts_to_audio).is_dir():
+            print(f"Error: Specified path is not a directory: {args.scripts_to_audio}")
+            return 1
+        
+        # In scripts-to-audio mode, input PDF is not required
+        # Set a dummy value for compatibility with PodcastGenerator
+        args.input = args.input or "dummy.pdf"
+        
+        # Create output directory if specified
+        if hasattr(args, 'output_dir') and args.output_dir:
+            Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    else:
+        # Normal mode - validate required arguments
+        if not args.input:
+            print("Error: --input is required in normal mode")
+            return 1
+        if not args.output_dir:
+            print("Error: --output-dir is required in normal mode")
+            return 1
+        if not Path(args.input).exists():
+            print(f"Error: Input file not found: {args.input}")
+            return 1
+        
+        # Create output directory
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
     # Create and run podcast generator
     generator = PodcastGenerator(args)
