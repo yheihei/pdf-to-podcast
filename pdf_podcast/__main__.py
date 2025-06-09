@@ -2,23 +2,24 @@
 
 import argparse
 import asyncio
-import os
-import sys
-import signal
-import re
-from pathlib import Path
-from typing import Optional, Dict, Any
 import logging
+import os
+import re
+import signal
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
-from .pdf_parser import PDFParser, Chapter, Section
+from .audio_mixer import AudioMixer
+from .logging_system import setup_logger
+from .manifest import (ChapterInfo, ChapterStatus, ManifestManager,
+                       SectionInfo, SectionStatus)
+from .model_config import ModelConfig
+from .pdf_parser import Chapter, PDFParser, Section
 from .script_builder import ScriptBuilder
 from .tts_client import TTSClient
-from .audio_mixer import AudioMixer
-from .manifest import ManifestManager, ChapterInfo, ChapterStatus, SectionInfo, SectionStatus
-from .logging_system import setup_logger
-from .model_config import ModelConfig
 
 # Load environment variables
 load_dotenv()
@@ -291,7 +292,9 @@ class PodcastGenerator:
                 model_name=self.model_config.tts_model,
                 sample_rate=self.quality_settings["sample_rate"],
                 channels=self.quality_settings["channels"],
-                bitrate=self.args.bitrate
+                bitrate=self.args.bitrate,
+                temperature=self.args.temperature,
+                style_instructions=self.args.style_instructions
             )
             
             # Generate audio for missing files only
@@ -650,7 +653,9 @@ class PodcastGenerator:
                 model_name=self.model_config.tts_model,
                 sample_rate=self.quality_settings["sample_rate"],
                 channels=self.quality_settings["channels"],
-                bitrate=self.args.bitrate
+                bitrate=self.args.bitrate,
+                temperature=self.args.temperature,
+                style_instructions=self.args.style_instructions
             )
             
             # Convert scripts to lecture content format
@@ -849,7 +854,9 @@ class PodcastGenerator:
                 model_name=self.model_config.tts_model,
                 sample_rate=self.quality_settings["sample_rate"],
                 channels=self.quality_settings["channels"],
-                bitrate=self.args.bitrate
+                bitrate=self.args.bitrate,
+                temperature=self.args.temperature,
+                style_instructions=self.args.style_instructions
             )
             
             # Setup output directory for audio
@@ -922,7 +929,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   pdf_podcast --input book.pdf --output-dir ./podcast
   pdf_podcast --input book.pdf --output-dir ./podcast --max-concurrency 2 --skip-existing
-  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice Kore
+  pdf_podcast --input book.pdf --output-dir ./podcast --bgm jingle.mp3 --voice Zephyr
         """
     )
     
@@ -961,8 +968,22 @@ Examples:
     parser.add_argument(
         "--voice",
         type=str,
-        default="Kore",
-        help="Voice name for the lecturer (default: Kore)"
+        default="Zephyr",
+        help="Voice name for the lecturer (default: Zephyr)"
+    )
+    
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="TTS temperature for voice variability (0.1-1.0, default: 1.0 for maximum expression)"
+    )
+    
+    parser.add_argument(
+        "--style-instructions",
+        type=str,
+        default="vivacious, fresh, lively, fast-talking and smooth, sexy.",
+        help="Style instructions for TTS voice (default: anime-style high school girl voice)"
     )
     
     parser.add_argument(

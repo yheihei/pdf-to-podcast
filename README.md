@@ -83,10 +83,33 @@ python -m pdf_podcast --scripts-to-audio ./scripts/document --output-dir ./outpu
 python -m pdf_podcast \
   --input document.pdf \
   --output-dir ./output \
-  --voice Kore \
+  --voice Zephyr \
   --quality standard \
   --bgm background_music.mp3 \
   --skip-existing
+```
+
+### 音声スタイルのカスタマイズ
+
+音声の表現力やスタイルを細かく調整できます：
+
+```bash
+# デフォルト設定（明るい感じ）
+python -m pdf_podcast --input document.pdf --output-dir ./output
+
+# より落ち着いた声に変更
+python -m pdf_podcast \
+  --input document.pdf \
+  --output-dir ./output \
+  --voice Kore \
+  --temperature 0.7 \
+  --style-instructions "calm, professional, clear speaking"
+
+# カスタムスタイルの例
+python -m pdf_podcast \
+  --input document.pdf \
+  --output-dir ./output \
+  --style-instructions "energetic, enthusiastic, university lecturer style"
 ```
 
 ### 音声品質設定
@@ -129,7 +152,9 @@ python -m pdf_podcast --input document.pdf --output-dir ./output --page-offset 5
 | `--input` | 入力PDFファイルのパス | 通常モードで必須 |
 | `--output-dir` | 出力ディレクトリ | 通常モードで必須 |
 | `--scripts-to-audio` | スクリプトディレクトリから音声のみ生成 | なし |
-| `--voice` | 講師の音声 | Kore |
+| `--voice` | 講師の音声 | Zephyr |
+| `--temperature` | TTS音声の表現力（0.1-1.0） | 1.0 |
+| `--style-instructions` | 音声スタイルの指示 | vivacious, fresh, lively, fast-talking and smooth, sexy |
 | `--quality` | 音声品質プリセット（high/standard/compact） | standard |
 | `--bitrate` | 音声のビットレート（qualityより優先） | 128k |
 | `--bgm` | BGM音楽ファイルのパス | なし |
@@ -148,6 +173,35 @@ python -m pdf_podcast --input document.pdf --output-dir ./output --page-offset 5
 | `high` | 320kbps | 24kHz | ステレオ | 大（従来サイズ） | 最高音質が必要な場合 |
 | `standard` | 128kbps | 22.05kHz | モノラル | 小（70%削減） | **推奨**：音声コンテンツに最適 |
 | `compact` | 96kbps | 16kHz | モノラル | 最小（80%削減） | ストレージ節約が最優先 |
+
+#### 利用可能な音声
+
+| 音声名 | 特徴 | 適用場面 |
+|--------|------|----------|
+| `Zephyr` | Bright（明るい） | **デフォルト**：活発でエネルギッシュな講義 |
+| `Leda` | Youthful（若々しい） | アニメ風、親しみやすい説明 |
+| `Kore` | Firm（しっかりした） | 専門的、落ち着いた解説 |
+| `Puck` | Upbeat（陽気な） | 楽しい、ポップな雰囲気 |
+| `Aoede` | - | バランスの取れた音声 |
+| `Charon` | - | 深みのある音声 |
+
+#### 音声スタイル指示の例
+
+`--style-instructions`で音声の話し方を詳細に指定できます：
+
+```bash
+# 明るい感じ（デフォルト）
+--style-instructions "vivacious, fresh, lively, fast-talking and smooth, sexy"
+
+# 大学講師風
+--style-instructions "professional, clear, academic lecturer style"
+
+# 親しみやすい先生風
+--style-instructions "friendly teacher, warm, encouraging, easy to understand"
+
+# エネルギッシュなプレゼンター風
+--style-instructions "energetic, enthusiastic, dynamic presentation style"
+```
 
 ## 出力ファイル
 
