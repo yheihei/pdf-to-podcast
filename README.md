@@ -51,8 +51,30 @@ cp .env.example .env
 ### 基本的な使い方
 
 ```bash
+# 新規PDF処理
 python -m pdf_podcast --input document.pdf --output-dir ./output
 ```
+
+### Scripts-to-Audio機能（新機能）
+
+音声生成が途中で止まった場合や、既存のスクリプトから音声のみを再生成したい場合に使用：
+
+```bash
+# 既存スクリプトから音声のみ生成
+python -m pdf_podcast --scripts-to-audio ./output/scripts/document
+
+# 相対パスでも指定可能
+python -m pdf_podcast --scripts-to-audio scripts/document
+
+# 出力先を指定（オプション）
+python -m pdf_podcast --scripts-to-audio ./scripts/document --output-dir ./output
+```
+
+**特徴:**
+- PDF解析とスクリプト生成をスキップして高速処理
+- 既存の音声ファイルを自動でスキップ
+- レート制限エラー時の再開が簡単
+- 429エラー発生時に適切な再開コマンドを表示
 
 ### 詳細なオプション
 
@@ -85,8 +107,9 @@ python -m pdf_podcast --input document.pdf --output-dir ./output --quality compa
 
 | オプション | 説明 | デフォルト |
 |------------|------|------------|
-| `--input` | 入力PDFファイルのパス | 必須 |
-| `--output-dir` | 出力ディレクトリ | 必須 |
+| `--input` | 入力PDFファイルのパス | 通常モードで必須 |
+| `--output-dir` | 出力ディレクトリ | 通常モードで必須 |
+| `--scripts-to-audio` | スクリプトディレクトリから音声のみ生成 | なし |
 | `--voice` | 講師の音声 | Kore |
 | `--quality` | 音声品質プリセット（high/standard/compact） | standard |
 | `--bitrate` | 音声のビットレート（qualityより優先） | 128k |
@@ -159,8 +182,17 @@ output/
 ### タイムアウトエラー
 長いコンテンツの処理でタイムアウトが発生する場合は、章の内容を短くするか、処理を分割してください。
 
-### レート制限エラー
-APIのレート制限に達した場合は、少し時間を置いてから再実行してください。
+### レート制限エラー（429エラー）
+APIのレート制限に達した場合：
+
+1. **自動ガイダンス**: エラー発生時に処理状況と再開コマンドが表示されます
+2. **Scripts-to-Audio機能を使用**: 推奨待機時間（2-5分）後に表示されたコマンドで再開
+3. **既存ファイルは自動スキップ**: 重複処理を避けて効率的に再開
+
+```bash
+# 例：429エラー後の再開
+python -m pdf_podcast --scripts-to-audio ./output/scripts/document
+```
 
 ### 音声が生成されない
 - Google API Keyが正しく設定されているか確認してください
